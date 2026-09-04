@@ -1,0 +1,86 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  background: #f5f6f8;
+}
+
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-header h2 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.page-header .subtitle {
+  color: #8c8c8c;
+  font-size: 13px;
+}
+
+/* Ответ бота и фрагменты из учебника — моноширинный набор здесь мешает,
+   а вот аккуратные отступы в списках нужны */
+.answer-body {
+  line-height: 1.65;
+  font-size: 14px;
+}
+
+.answer-body ul,
+.answer-body ol {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+
+.answer-body p {
+  margin: 0 0 10px;
+}
+
+.answer-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+}
+
+.answer-body th,
+.answer-body td {
+  border: 1px solid #e8e8e8;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.chunk-preview {
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.stat-hint {
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.image-card-cover {
+  height: 160px;
+  object-fit: cover;
+  width: 100%;
+  background: #fafafa;
+}

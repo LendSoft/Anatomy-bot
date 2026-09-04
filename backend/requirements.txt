@@ -1,0 +1,41 @@
+# ---- web ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+gunicorn==23.0.0
+python-multipart==0.0.20
+
+# ---- конфигурация / валидация ----
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# ---- база данных ----
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+pgvector==0.3.6
+greenlet==3.1.1
+
+# ---- кэш и очередь задач ----
+redis==5.2.1
+arq==0.26.3
+
+# ---- безопасность ----
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
+pyjwt==2.10.1
+
+# ---- HTTP-клиенты ----
+# httpx покрывает и локальную vLLM, и GigaChat — отдельных SDK не нужно
+httpx==0.28.1
+tenacity==9.0.0
+
+# ---- парсинг документов ----
+pypdf==5.1.0
+python-docx==1.1.2
+pytesseract==0.3.13
+pdf2image==1.17.0
+pillow==11.1.0
+
+# ---- логирование ----
+structlog==24.4.0

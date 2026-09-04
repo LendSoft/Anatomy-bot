@@ -1,0 +1,102 @@
+# Прод-оверлей.
+# Запуск:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile gpu up -d --build
+#
+# Отличия от dev:
+#   * порты БД/Redis/LLM наружу не публикуются
+#   * бэкенд под gunicorn с воркерами uvicorn, без --reload
+#   * фронтенд собирается в статику и раздаётся nginx
+#   * перед всем стоит Caddy: автоматический Let's Encrypt, HTTP/2, gzip
+
+services:
+  postgres:
+    ports: !reset []
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=32MB
+      -c maintenance_work_mem=256MB
+      -c max_connections=100
+
+  redis:
+    ports: !reset []
+
+  embeddings:
+    ports: !reset []
+
+  llm:
+    ports: !reset []
+
+  ollama:
+    ports: !reset []
+
+  api:
+    build:
+      target: prod
+    image: anatomy-bot-backend:prod
+    volumes: !reset
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    ports: !reset []
+    environment:
+      ENVIRONMENT: production
+    command: >
+      sh -c "alembic upgrade head &&
+             gunicorn app.main:app
+               --worker-class uvicorn.workers.UvicornWorker
+               --workers 4
+               --bind 0.0.0.0:8080
+               --timeout 300
+               --graceful-timeout 30
+               --access-logfile -"
+
+  worker:
+    build:
+      target: prod
+    image: anatomy-bot-backend:prod
+    volumes: !reset
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    environment:
+      ENVIRONMENT: production
+
+  vkbot:
+    build:
+      target: prod
+    image: anatomy-bot-backend:prod
+    volumes: !reset
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    environment:
+      ENVIRONMENT: production
+
+  web:
+    build:
+      target: prod
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    volumes: !reset []
+    ports: !reset []
+    command: !reset null
+
+  # ------------------------------------------------------ Reverse proxy + TLS
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+      - web
+
+volumes:
+  caddydata:
+  caddyconfig:

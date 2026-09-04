@@ -1,0 +1,254 @@
+# Dev-окружение.  Запуск:  docker compose up -d --build
+# Прод:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+name: anatomy-bot
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_DB: ${REDIS_DB:-0}
+  SECRET_KEY: ${SECRET_KEY}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
+  FIRST_ADMIN_EMAIL: ${FIRST_ADMIN_EMAIL}
+  FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+  LLM_PROVIDER: ${LLM_PROVIDER:-vllm}
+  LLM_MODEL: ${LLM_MODEL}
+  LLM_BASE_URL: ${LLM_BASE_URL}
+  LLM_API_KEY: ${LLM_API_KEY:-not-needed-for-local}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
+  LLM_FALLBACK_ENABLED: ${LLM_FALLBACK_ENABLED:-false}
+  LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-gigachat}
+  LLM_FALLBACK_MODEL: ${LLM_FALLBACK_MODEL:-GigaChat-2}
+  GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
+  GIGACHAT_CLIENT_ID: ${GIGACHAT_CLIENT_ID:-}
+  GIGACHAT_CLIENT_SECRET: ${GIGACHAT_CLIENT_SECRET:-}
+  GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+  GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-2}
+  GIGACHAT_VERIFY_SSL: ${GIGACHAT_VERIFY_SSL:-false}
+  EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL:-http://embeddings:8100}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+  EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+  RERANKER_MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+  STORAGE_DIR: ${STORAGE_DIR:-/data/storage}
+  MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-200}
+  VK_ENABLED: ${VK_ENABLED:-false}
+  VK_GROUP_TOKEN: ${VK_GROUP_TOKEN:-}
+  VK_GROUP_ID: ${VK_GROUP_ID:-}
+  VK_RATE_LIMIT_PER_MINUTE: ${VK_RATE_LIMIT_PER_MINUTE:-10}
+
+services:
+  # ---------------------------------------------------------------- Postgres
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------------------------------------------- Redis
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ------------------------------------------- Эмбеддинги + реранкер (CPU)
+  embeddings:
+    build:
+      context: ./embeddings
+    restart: unless-stopped
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      RERANKER_MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      EMBEDDINGS_DEVICE: ${EMBEDDINGS_DEVICE:-cpu}
+      HF_HOME: /models
+    volumes:
+      - hfcache:/models
+    ports:
+      - "127.0.0.1:${EMBEDDINGS_HOST_PORT:-8100}:8100"
+    healthcheck:
+      # Проверяем именно готовность моделей: сервис отвечает 200 уже во время
+      # их загрузки, и без этой проверки контейнер числился бы здоровым зря
+      test: ["CMD", "python", "-c", "import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://localhost:8100/health')).get('ready') else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
+
+  # ------------------------------------------------------- Локальная LLM (GPU)
+  # Профиль gpu:  docker compose --profile gpu up -d
+  llm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    profiles: ["gpu"]
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+      HF_HOME: /models
+    volumes:
+      - hfcache:/models
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+      --served-model-name ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+      --quantization ${VLLM_QUANTIZATION:-awq_marlin}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:${LLM_HOST_PORT:-8000}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 60
+      start_period: 600s
+
+  # --------------------------------------------------- Альтернатива: Ollama
+  # Профиль ollama:  docker compose --profile ollama up -d
+  # Проще в запуске, чем vLLM, и работает без GPU (медленно). Удобно, чтобы
+  # быстро попробовать другую модель или поднять бота на машине без карты.
+  # После запуска скачайте модель:
+  #   docker compose exec ollama ollama pull qwen3:8b
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ["ollama"]
+    volumes:
+      - ollamadata:/root/.ollama
+    ports:
+      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
+    # Строку ниже раскомментируйте, если хотите отдать Ollama видеокарту
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ----------------------------------------------------------------- Backend
+  # api, worker и vkbot собираются из одного Dockerfile и отличаются только
+  # командой запуска, поэтому у всех троих одно имя образа: сборка идёт один
+  # раз, а не три раза подряд.
+  api:
+    build:
+      context: ./backend
+      target: dev
+    image: anatomy-bot-backend:dev
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./backend:/app
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  # ----------------------------------------------- Воркер фоновых задач (ARQ)
+  worker:
+    build:
+      context: ./backend
+      target: dev
+    image: anatomy-bot-backend:dev
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./backend:/app
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["arq", "app.worker.main.WorkerSettings"]
+
+  # -------------------------------------------------------------- VK Long Poll
+  vkbot:
+    build:
+      context: ./backend
+      target: dev
+    image: anatomy-bot-backend:dev
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./backend:/app
+      - storage:/data/storage
+      - ./deploy/certs:/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["python", "-m", "app.vk.run"]
+
+  # ---------------------------------------------------------------- Frontend
+  web:
+    build:
+      context: ./frontend
+      target: dev
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-5173}:5173"
+    depends_on:
+      - api
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+
+volumes:
+  pgdata:
+  redisdata:
+  hfcache:
+  ollamadata:
+  storage:

@@ -1,0 +1,44 @@
+[project]
+name = "anatomy-bot-backend"
+version = "1.0.0"
+description = "Бэкенд образовательного бота по анатомии человека"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+]
+ignore = [
+    "E501",  # длину строк держит форматтер
+    "B008",  # Depends() в аргументах по умолчанию — идиома FastAPI
+    "N812",  # `import prompts as P` — короткий псевдоним, промпты цитируются часто
+]
+
+[tool.ruff.lint.per-file-ignores]
+# В миграциях порядок импортов задаёт шаблон Alembic
+"alembic/env.py" = ["I001"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+# Строгую типизацию включаем постепенно, по мере готовности модулей
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q"

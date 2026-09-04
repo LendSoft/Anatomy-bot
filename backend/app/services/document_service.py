@@ -1,0 +1,178 @@
+"""Индексация учебных материалов.
+
+Тяжёлая часть (парсинг, OCR, эмбеддинги) выполняется в воркере ARQ:
+разбор учебника на 800 страниц занимает минуты, держать на этом
+HTTP-запрос нельзя.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.logging import get_logger
+from app.models.document import Document, DocumentChunk, DocumentStatus
+from app.rag import embeddings, parsers
+from app.rag.chunking import chunk_document
+from app.services import settings_service
+
+log = get_logger(__name__)
+
+# Батч для эмбеддингов: больше — быстрее, но на CPU растёт задержка и память
+EMBED_BATCH = 32
+
+
+async def _set_status(
+    db: AsyncSession,
+    document_id: int,
+    status: DocumentStatus,
+    *,
+    progress: int | None = None,
+    error: str | None = None,
+) -> None:
+    values: dict = {"status": status}
+    if progress is not None:
+        values["progress"] = progress
+    if error is not None:
+        values["error_message"] = error
+    await db.execute(update(Document).where(Document.id == document_id).values(**values))
+    await db.commit()
+
+
+async def index_document(db: AsyncSession, document_id: int) -> None:
+    """Полный цикл индексации одного документа."""
+    document = (
+        await db.execute(select(Document).where(Document.id == document_id))
+    ).scalar_one_or_none()
+
+    if document is None:
+        log.warning("index_document_not_found", document_id=document_id)
+        return
+
+    cfg = await settings_service.get_all(db, use_cache=False)
+    path = Path(document.stored_path)
+
+    if not path.exists():
+        await _set_status(
+            db, document_id, DocumentStatus.failed, error=f"Файл не найден: {path}"
+        )
+        return
+
+    try:
+        # При первом запуске сервис эмбеддингов ещё скачивает веса моделей.
+        # Ждём его, иначе документ уйдёт в ошибку из-за того, что система
+        # просто не успела прогреться.
+        if not await embeddings.wait_ready():
+            raise RuntimeError(
+                "Сервис эмбеддингов не готов. Проверьте его состояние в разделе "
+                "«Система» и переиндексируйте документ."
+            )
+
+        # ------------------------------------------------------- парсинг
+        await _set_status(db, document_id, DocumentStatus.parsing, progress=5)
+        log.info("parsing_started", document_id=document_id, file=document.original_filename)
+
+        parsed = parsers.parse(path, ocr_enabled=bool(cfg["ocr_enabled"]))
+
+        if not parsed.total_chars:
+            raise parsers.ParsingError(
+                "Из файла не удалось извлечь текст. Если это скан, включите OCR в настройках."
+            )
+
+        # -------------------------------------------------------- нарезка
+        await _set_status(db, document_id, DocumentStatus.chunking, progress=35)
+        chunks = chunk_document(
+            parsed,
+            chunk_size=int(cfg["chunk_size"]),
+            chunk_overlap=int(cfg["chunk_overlap"]),
+        )
+
+        if not chunks:
+            raise parsers.ParsingError("После нарезки не осталось ни одного фрагмента")
+
+        log.info(
+            "chunking_done",
+            document_id=document_id,
+            pages=len(parsed.pages),
+            chunks=len(chunks),
+            ocr=parsed.used_ocr,
+        )
+
+        # Переиндексация: старые фрагменты убираем целиком
+        await db.execute(
+            delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        )
+        await db.commit()
+
+        # ------------------------------------------------------ эмбеддинги
+        await _set_status(db, document_id, DocumentStatus.embedding, progress=45)
+
+        for start in range(0, len(chunks), EMBED_BATCH):
+            batch = chunks[start : start + EMBED_BATCH]
+            # Заголовок в тексте эмбеддинга помогает попадать в нужный раздел
+            texts = [
+                f"{c.heading}\n{c.content}" if c.heading else c.content for c in batch
+            ]
+            vectors = await embeddings.embed(texts, kind="document")
+
+            db.add_all(
+                [
+                    DocumentChunk(
+                        document_id=document_id,
+                        chunk_index=chunk.index,
+                        content=chunk.content,
+                        heading=chunk.heading,
+                        page_from=chunk.page_from,
+                        page_to=chunk.page_to,
+                        token_count=chunk.approx_tokens,
+                        embedding=vector,
+                    )
+                    for chunk, vector in zip(batch, vectors, strict=True)
+                ]
+            )
+            await db.commit()
+
+            progress = 45 + int(50 * (start + len(batch)) / len(chunks))
+            await _set_status(db, document_id, DocumentStatus.embedding, progress=progress)
+
+        # --------------------------------------------------------- готово
+        await db.execute(
+            update(Document)
+            .where(Document.id == document_id)
+            .values(
+                status=DocumentStatus.ready,
+                progress=100,
+                error_message=None,
+                pages_count=len(parsed.pages),
+                chunks_count=len(chunks),
+                indexed_at=datetime.now(UTC),
+                extra={"parser": parsed.parser, "used_ocr": parsed.used_ocr},
+            )
+        )
+        await db.commit()
+        log.info("indexing_done", document_id=document_id, chunks=len(chunks))
+
+    except Exception as exc:  # noqa: BLE001 — ошибку нужно показать в админке
+        log.exception("indexing_failed", document_id=document_id)
+        await db.rollback()
+        await _set_status(db, document_id, DocumentStatus.failed, error=str(exc)[:2000])
+
+
+async def delete_document(db: AsyncSession, document_id: int) -> bool:
+    from app.services import storage
+
+    document = (
+        await db.execute(select(Document).where(Document.id == document_id))
+    ).scalar_one_or_none()
+    if document is None:
+        return False
+
+    stored_path = document.stored_path
+    await db.delete(document)  # фрагменты уходят каскадом
+    await db.commit()
+
+    storage.delete_file(stored_path)
+    return True

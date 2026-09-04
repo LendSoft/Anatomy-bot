@@ -1,0 +1,38 @@
+# окружение — содержит пароли и токены, в репозиторий не попадает
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-check/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# данные и загруженные материалы
+/data/
+storage/
+
+# скачанные сертификаты (восстанавливаются deploy/install-russian-ca.sh)
+deploy/certs/*
+!deploy/certs/.gitkeep
+*.db
+*.sqlite3
+
+# IDE и ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

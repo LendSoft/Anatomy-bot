@@ -1,0 +1,2 @@
+# Сюда install-russian-ca.sh кладёт russian_trusted.pem.
+# Каталог монтируется в контейнеры api, worker и vkbot как /certs (только чтение).

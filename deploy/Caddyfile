@@ -1,0 +1,47 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# Загрузка учебников и атласов — файлы бывают крупные
+	request_body {
+		max_size 200MB
+	}
+
+	# API бэкенда
+	handle /api/* {
+		reverse_proxy api:8080 {
+			# Индексация и генерация ответа могут идти долго
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	# Отдача загруженных изображений атласов
+	handle /media/* {
+		reverse_proxy api:8080
+	}
+
+	# Статика админ-панели
+	handle {
+		reverse_proxy web:80
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 50MB
+			roll_keep 10
+		}
+	}
+}
