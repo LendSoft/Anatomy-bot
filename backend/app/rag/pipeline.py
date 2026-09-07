@@ -25,6 +25,18 @@ from app.services import settings_service
 
 log = get_logger(__name__)
 
+# Точное совпадение после нормализации — иначе вопрос «Привет, а что такое
+# гайморова пазуха?» тоже попал бы под приветствие вместо поиска по базе
+GREETING_TRIGGERS = frozenset({
+    "привет", "здравствуйте", "здравствуй", "добрый день", "добрый вечер",
+    "доброе утро", "приветствую", "хай", "начать", "start", "/start",
+    "помощь", "/помощь", "help", "/help",
+})
+
+
+def _is_greeting(question: str) -> bool:
+    return question.strip().lower().rstrip("!.,") in GREETING_TRIGGERS
+
 
 @dataclass
 class AnswerResult:
@@ -102,6 +114,12 @@ async def answer_question(
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
     result = AnswerResult(answer="", refused=False)
+
+    # ------------------------------------------------------ приветствие
+    if bool(cfg["greeting_enabled"]) and _is_greeting(question):
+        result.answer = str(cfg["greeting_message"])
+        result.total_ms = int((time.monotonic() - started) * 1000)
+        return result
 
     # -------------------------------------------------------------- поиск
     retrieval_started = time.monotonic()

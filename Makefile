@@ -10,7 +10,7 @@ COMPOSE_PROD := docker compose -f docker-compose.yml -f docker-compose.prod.yml
 # Проекту эти манифесты не нужны — отключаем.
 export BUILDX_NO_DEFAULT_ATTESTATIONS = 1
 
-.PHONY: help init venv test lint up up-gpu down logs ps migrate revision \
+.PHONY: help init venv test lint up down logs ps migrate revision \
         shell-api shell-db prod-up prod-down prod-logs prod-migrate \
         gigachat-ca backup restore clean
 
@@ -19,8 +19,7 @@ help:
 	@echo "venv         — локальное окружение Python для IDE и тестов"
 	@echo "test         — прогнать тесты"
 	@echo "lint         — проверить код линтером"
-	@echo "up           — поднять окружение разработки (без GPU-контейнера)"
-	@echo "up-gpu       — то же плюс локальная LLM на vLLM"
+	@echo "up           — поднять окружение разработки"
 	@echo "down         — остановить"
 	@echo "logs         — логи всех сервисов"
 	@echo "migrate      — применить миграции"
@@ -51,9 +50,6 @@ gigachat-ca:
 up:
 	$(COMPOSE_DEV) up -d --build
 
-up-gpu:
-	$(COMPOSE_DEV) --profile gpu up -d --build
-
 down:
 	$(COMPOSE_DEV) down
 
@@ -76,7 +72,7 @@ shell-db:
 	$(COMPOSE_DEV) exec postgres psql -U $${POSTGRES_USER:-anatomy} -d $${POSTGRES_DB:-anatomy}
 
 prod-up:
-	$(COMPOSE_PROD) --profile gpu up -d --build
+	$(COMPOSE_PROD) up -d --build
 
 prod-down:
 	$(COMPOSE_PROD) down

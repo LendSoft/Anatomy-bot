@@ -1,9 +1,9 @@
 # Прод-оверлей.
 # Запуск:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile gpu up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Отличия от dev:
-#   * порты БД/Redis/LLM наружу не публикуются
+#   * порты БД/Redis/Ollama наружу не публикуются
 #   * бэкенд под gunicorn с воркерами uvicorn, без --reload
 #   * фронтенд собирается в статику и раздаётся nginx
 #   * перед всем стоит Caddy: автоматический Let's Encrypt, HTTP/2, gzip
@@ -22,9 +22,6 @@ services:
     ports: !reset []
 
   embeddings:
-    ports: !reset []
-
-  llm:
     ports: !reset []
 
   ollama:

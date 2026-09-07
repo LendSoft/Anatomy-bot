@@ -63,7 +63,7 @@ export default function Logs() {
       title: 'Роль',
       dataIndex: 'role',
       width: 90,
-      render: (role) => (role === 'user' ? <Tag>студент</Tag> : <Tag color="blue">бот</Tag>),
+      render: (role) => (role === 'user' ? <Tag>user</Tag> : <Tag color="blue">bot</Tag>),
     },
     {
       title: 'Текст',

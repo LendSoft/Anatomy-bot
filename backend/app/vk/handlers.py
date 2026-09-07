@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from pathlib import Path
 
@@ -21,24 +23,20 @@ log = get_logger(__name__)
 # Ограничение VK на длину сообщения — режем с запасом
 MAX_MESSAGE_LENGTH = 4000
 
-WELCOME = (
-    "Здравствуйте! Я помогу разобраться в анатомии человека.\n\n"
-    "Задайте вопрос своими словами, например:\n"
-    "• Какие ветви имеет наружная сонная артерия?\n"
-    "• Расскажи строение плечевой кости\n"
-    "• Что проходит через яремное отверстие?\n\n"
-    "Отвечаю только по учебным материалам кафедры и всегда указываю источник. "
-    "Если нужных сведений в базе нет, я скажу об этом прямо, а не буду "
-    "додумывать.\n\n"
-    "Команды: /помощь — эта справка."
-)
-
 RATE_LIMITED = (
     "Слишком много запросов подряд. Подождите минуту, пожалуйста — "
     "я обрабатываю вопросы по очереди."
 )
 
-COMMANDS_HELP = {"/помощь", "/help", "помощь", "начать", "start", "/start"}
+# VK показывает «печатает» секунд на 10 — на генерации в минуту и дольше
+# (локальная модель на CPU) индикатор нужно обновлять самим
+TYPING_REFRESH_SECONDS = 8
+
+
+async def _keep_typing(vk_api: VkApi, peer_id: int) -> None:
+    while True:
+        await vk_api.set_typing(peer_id)
+        await asyncio.sleep(TYPING_REFRESH_SECONDS)
 
 
 async def check_rate_limit(redis: aioredis.Redis, vk_id: int, limit: int) -> bool:
@@ -152,10 +150,6 @@ async def handle_message(
     if not text:
         return
 
-    if text.lower() in COMMANDS_HELP:
-        await vk_api.send_message(peer_id, WELCOME)
-        return
-
     user = await get_or_create_user(db, vk_api, from_id)
 
     if user.is_blocked:
@@ -170,15 +164,19 @@ async def handle_message(
         await vk_api.send_message(peer_id, RATE_LIMITED)
         return
 
-    await vk_api.set_typing(peer_id)
-
-    result, _ = await chat_service.ask(
-        db,
-        text,
-        channel=Channel.vk,
-        external_id=str(peer_id),
-        vk_user=user,
-    )
+    typing_task = asyncio.create_task(_keep_typing(vk_api, peer_id))
+    try:
+        result, _ = await chat_service.ask(
+            db,
+            text,
+            channel=Channel.vk,
+            external_id=str(peer_id),
+            vk_user=user,
+        )
+    finally:
+        typing_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await typing_task
 
     attachment = None
     if result.images and not result.refused:

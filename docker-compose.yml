@@ -19,7 +19,7 @@ x-backend-env: &backend-env
   FIRST_ADMIN_EMAIL: ${FIRST_ADMIN_EMAIL}
   FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
-  LLM_PROVIDER: ${LLM_PROVIDER:-vllm}
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
   LLM_MODEL: ${LLM_MODEL}
   LLM_BASE_URL: ${LLM_BASE_URL}
   LLM_API_KEY: ${LLM_API_KEY:-not-needed-for-local}
@@ -101,26 +101,18 @@ services:
       retries: 40
       start_period: 300s
 
-  # ------------------------------------------------------- Локальная LLM (GPU)
-  # Профиль gpu:  docker compose --profile gpu up -d
-  llm:
-    image: vllm/vllm-openai:latest
+  # ------------------------------------------------------------------- Ollama
+  # Локальная модель. С видеокартой — быстро (GPU-проброс ниже), без неё —
+  # тоже работает, просто медленнее. После первого запуска скачайте модель:
+  #   docker compose exec ollama ollama pull qwen3:8b
+  # Если видеокарты нет — уберите блок deploy ниже.
+  ollama:
+    image: ollama/ollama:latest
     restart: unless-stopped
-    profiles: ["gpu"]
-    environment:
-      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
-      HF_HOME: /models
     volumes:
-      - hfcache:/models
-    command: >
-      --model ${VLLM_MODEL:-Qwen/Qwen3-14B-AWQ}
-      --served-model-name ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
-      --quantization ${VLLM_QUANTIZATION:-awq_marlin}
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
-      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
-      --host 0.0.0.0 --port 8000
+      - ollamadata:/root/.ollama
     ports:
-      - "127.0.0.1:${LLM_HOST_PORT:-8000}:8000"
+      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
     deploy:
       resources:
         reservations:
@@ -128,35 +120,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 60
-      start_period: 600s
-
-  # --------------------------------------------------- Альтернатива: Ollama
-  # Профиль ollama:  docker compose --profile ollama up -d
-  # Проще в запуске, чем vLLM, и работает без GPU (медленно). Удобно, чтобы
-  # быстро попробовать другую модель или поднять бота на машине без карты.
-  # После запуска скачайте модель:
-  #   docker compose exec ollama ollama pull qwen3:8b
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    profiles: ["ollama"]
-    volumes:
-      - ollamadata:/root/.ollama
-    ports:
-      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
-    # Строку ниже раскомментируйте, если хотите отдать Ollama видеокарту
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
   # ----------------------------------------------------------------- Backend
   # api, worker и vkbot собираются из одного Dockerfile и отличаются только

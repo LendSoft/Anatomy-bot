@@ -11,6 +11,7 @@ from app.api.deps import CurrentAdmin, DbSession, get_redis
 from app.core.config import settings
 from app.llm.factory import get_llm
 from app.rag import embeddings
+from app.services import settings_service
 
 router = APIRouter(tags=["Служебное"])
 
@@ -65,7 +66,11 @@ async def health_full(db: DbSession, _: CurrentAdmin) -> dict[str, Any]:
         "model": llm.model,
     }
 
-    result["vk"] = {"enabled": settings.vk_enabled, "configured": bool(settings.vk_group_token)}
+    # Панель приоритетнее .env — так же, как для самого бота (app.vk.run.load_vk_config)
+    vk_values = await settings_service.get_all(db, use_cache=False)
+    vk_enabled = bool(settings_service.resolve(vk_values, "vk_enabled", settings.vk_enabled))
+    vk_token = settings_service.resolve(vk_values, "vk_group_token", settings.vk_group_token)
+    result["vk"] = {"enabled": vk_enabled, "configured": bool(vk_token)}
     result["status"] = "ok" if all(
         component.get("ok", True) for component in result.values() if isinstance(component, dict)
     ) else "degraded"

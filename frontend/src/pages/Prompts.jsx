@@ -43,7 +43,7 @@ const KINDS = [
   {
     key: 'query_rewrite',
     label: 'Переформулировка запроса',
-    hint: 'Приведение вопроса студента к поисковому виду перед обращением к базе.',
+    hint: 'Приведение вопроса пользователя к поисковому виду перед обращением к базе.',
   },
 ]
 
@@ -74,7 +74,7 @@ function ExamplesEditor({ value = [], onChange }) {
           >
             <Space direction="vertical" style={{ width: '100%' }} size={8}>
               <Input
-                placeholder="Вопрос студента"
+                placeholder="Вопрос пользователя"
                 value={item.question}
                 onChange={(e) => update(index, 'question', e.target.value)}
               />

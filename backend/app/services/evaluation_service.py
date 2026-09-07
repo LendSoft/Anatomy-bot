@@ -50,8 +50,8 @@ async def judge_answer(
 
     system_prompt = await _judge_prompt(db)
     user_message = (
-        f"ВОПРОС СТУДЕНТА:\n{question}\n\n"
-        f"ЭТАЛОННЫЙ ОТВЕТ ПРЕПОДАВАТЕЛЯ:\n{reference}\n\n"
+        f"ВОПРОС ПОЛЬЗОВАТЕЛЯ:\n{question}\n\n"
+        f"ЭТАЛОННЫЙ ОТВЕТ:\n{reference}\n\n"
         f"ОТВЕТ БОТА:\n{answer}"
     )
 

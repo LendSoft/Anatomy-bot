@@ -31,7 +31,6 @@ const SELECT_LABELS = {
   'GigaChat-2': 'GigaChat-2 — базовая, быстрее и дешевле',
   'GigaChat-2-Pro': 'GigaChat-2-Pro — точнее',
   'GigaChat-2-Max': 'GigaChat-2-Max — максимальное качество',
-  vllm: 'Локальная модель (vLLM)',
   ollama: 'Локальная модель (Ollama)',
   gigachat: 'GigaChat (Сбер)',
 }
@@ -79,6 +78,14 @@ function SettingField({ spec }) {
     return (
       <Form.Item {...common}>
         <Input allowClear placeholder={spec.placeholder || undefined} />
+      </Form.Item>
+    )
+  }
+
+  if (spec.type === 'text') {
+    return (
+      <Form.Item {...common}>
+        <Input.TextArea rows={6} placeholder={spec.placeholder || undefined} />
       </Form.Item>
     )
   }
@@ -137,6 +144,7 @@ export default function Settings() {
   // Порядок групп в интерфейсе: сперва подключения, которые заполняют при
   // запуске, затем то, что крутят по ходу работы
   const GROUP_ORDER = [
+    'Приветствие',
     'ВКонтакте',
     'GigaChat',
     'Языковая модель',
@@ -185,10 +193,6 @@ export default function Settings() {
     <div>
       <div className="page-header">
         <h2>Параметры бота</h2>
-        <div className="subtitle">
-          Меняются на лету, перезапуск не нужен. Параметры индексации применяются
-          при следующем разборе документа.
-        </div>
       </div>
 
       <Alert
@@ -199,9 +203,6 @@ export default function Settings() {
         description={
           <span>
             Чем выше порог, тем чаще бот честно отвечает «нет в базе» вместо догадки.
-            Если студенты жалуются на частые отказы, сначала проверьте раздел «Логи» —
-            возможно, дело не в пороге, а в том, что нужных материалов действительно
-            нет в базе.
           </span>
         }
       />
@@ -238,9 +239,6 @@ export default function Settings() {
             >
               <Button danger>Сбросить к значениям по умолчанию</Button>
             </Popconfirm>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Проверить эффект можно в разделе «Проверка»
-            </Typography.Text>
           </Space>
         </Card>
       </Form>

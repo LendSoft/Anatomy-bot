@@ -50,8 +50,8 @@ if command -v nvidia-smi >/dev/null 2>&1; then
         echo "         https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"
     fi
 else
-    warn "nvidia-smi не найден — vLLM не запустится"
-    warn "работайте на GigaChat или Ollama (профиль ollama)"
+    warn "nvidia-smi не найден — Ollama будет работать на CPU (медленнее)"
+    warn "или используйте GigaChat"
 fi
 
 echo

@@ -6,8 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv
 
-# torch ставим отдельно из CPU-индекса: колёса с CUDA весят ~2.5 ГБ и здесь не нужны
-RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+# torch ставим отдельно из CPU-индекса: колёса с CUDA весят ~2.5 ГБ и здесь не нужны.
+# Таймаут и ретраи увеличены: канал до download.pytorch.org нестабилен, а колесо
+# весит ~190 МБ — дефолтных 15 секунд на чтение не хватает.
+RUN pip install --no-cache-dir --timeout 180 --retries 15 torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

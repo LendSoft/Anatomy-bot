@@ -166,10 +166,6 @@ export default function System() {
             },
           ]}
         />
-        <div className="stat-hint" style={{ marginTop: 8 }}>
-          Настраивается переменными VK_ENABLED, VK_GROUP_TOKEN и VK_GROUP_ID в файле .env
-          на сервере — после изменения нужно перезапустить контейнер vkbot.
-        </div>
       </Card>
 
       <Card

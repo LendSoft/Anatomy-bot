@@ -1,8 +1,8 @@
-"""Клиент локальной модели: vLLM и Ollama.
+"""Клиент локальной модели: Ollama.
 
-Оба сервера отдают OpenAI-совместимый API (`/v1/chat/completions`) — это
-просто формат протокола, а не обращение к OpenAI. Все запросы идут внутрь
-compose, наружу ничего не уходит.
+Отдаёт OpenAI-совместимый API (`/v1/chat/completions`) — это просто формат
+протокола, а не обращение к OpenAI. Все запросы идут внутрь compose, наружу
+ничего не уходит.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ class OpenAICompatibleLLM(BaseLLM):
         base_url: str,
         api_key: str | None = None,
         timeout: int = 180,
-        provider_name: str = "vllm",
+        provider_name: str = "ollama",
     ) -> None:
         super().__init__(model)
         self.provider_name = provider_name
@@ -46,7 +46,7 @@ class OpenAICompatibleLLM(BaseLLM):
             "stream": stream,
             **params.as_dict(),
         }
-        # vLLM ругается на stop=null, проще убрать пустые значения
+        # сервер ругается на stop=null, проще убрать пустые значения
         return {k: v for k, v in payload.items() if v is not None}
 
     @retry(

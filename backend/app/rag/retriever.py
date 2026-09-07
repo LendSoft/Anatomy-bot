@@ -90,7 +90,7 @@ _VECTOR_SQL = text(
     WHERE c.embedding IS NOT NULL
       AND d.is_active
       AND d.status = 'ready'
-      AND (:section IS NULL OR d.section = :section)
+      AND (CAST(:section AS varchar) IS NULL OR d.section = CAST(:section AS varchar))
     ORDER BY c.embedding <=> CAST(:qvec AS vector)
     LIMIT :limit
     """
@@ -109,7 +109,7 @@ _TEXT_SQL = text(
     WHERE c.search_vector @@ q
       AND d.is_active
       AND d.status = 'ready'
-      AND (:section IS NULL OR d.section = :section)
+      AND (CAST(:section AS varchar) IS NULL OR d.section = CAST(:section AS varchar))
     ORDER BY score DESC
     LIMIT :limit
     """
@@ -282,7 +282,7 @@ async def search_images(
                 FROM atlas_images
                 WHERE embedding IS NOT NULL
                   AND is_active
-                  AND (:section IS NULL OR section = :section)
+                  AND (CAST(:section AS varchar) IS NULL OR section = CAST(:section AS varchar))
                 ORDER BY embedding <=> CAST(:qvec AS vector)
                 LIMIT :limit
                 """

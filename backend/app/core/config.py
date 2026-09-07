@@ -13,8 +13,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# vllm и ollama — локальные модели на своём железе, gigachat — облачный резерв
-LLMProvider = Literal["vllm", "ollama", "gigachat"]
+# ollama — локальная модель на своём железе, gigachat — облачный резерв
+LLMProvider = Literal["ollama", "gigachat"]
 
 
 class Settings(BaseSettings):
@@ -57,9 +57,9 @@ class Settings(BaseSettings):
     )
 
     # ---------- LLM ----------
-    llm_provider: LLMProvider = "vllm"
-    llm_model: str = "Qwen/Qwen3-14B-AWQ"
-    llm_base_url: str = "http://llm:8000/v1"
+    llm_provider: LLMProvider = "ollama"
+    llm_model: str = "qwen3:8b"
+    llm_base_url: str = "http://ollama:11434/v1"
     llm_api_key: str = "not-needed-for-local"
     llm_timeout_seconds: int = 180
 

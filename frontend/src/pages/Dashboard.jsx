@@ -202,7 +202,7 @@ export default function Dashboard() {
                 </div>
               </Col>
               <Col span={12}>
-                <Statistic title="Студентов в VK" value={overview?.vk_users_total || 0} />
+                <Statistic title="Пользователей в VK" value={overview?.vk_users_total || 0} />
                 <div className="stat-hint">
                   активны: {overview?.vk_users_active || 0}
                 </div>
