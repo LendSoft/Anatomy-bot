@@ -24,6 +24,8 @@ from app.services import stats_service
 RAW_QUERIES: dict[str, str] = {
     "retriever.vector": str(retriever._VECTOR_SQL),
     "retriever.text": str(retriever._TEXT_SQL),
+    "retriever.figures_by_page": str(retriever._FIGURES_BY_PAGE_SQL),
+    "retriever.figures_by_vector": str(retriever._FIGURES_BY_VECTOR_SQL),
 }
 
 
@@ -73,3 +75,9 @@ def test_daily_query_binds_since():
     assert "since" in statement._bindparams, (
         "Параметр since не распознан — проверьте, нет ли рядом `::`"
     )
+
+
+def test_figure_page_bounds_cast_to_integer():
+    sql = RAW_QUERIES["retriever.figures_by_page"]
+    for parameter in ("page_from", "page_to", "page_slack"):
+        assert f"CAST(:{parameter} AS integer)" in sql

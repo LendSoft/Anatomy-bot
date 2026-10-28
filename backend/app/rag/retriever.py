@@ -402,7 +402,9 @@ _FIGURES_BY_PAGE_SQL = text(
       -- Диапазон страниц фрагмента, плюс соседняя страница: рисунок
       -- часто стоит на развороте рядом с описывающим его текстом
       AND f.document_id = :document_id
-      AND f.page_number BETWEEN :page_from - :page_slack AND :page_to + :page_slack
+      AND f.page_number BETWEEN
+          CAST(:page_from AS integer) - CAST(:page_slack AS integer)
+          AND CAST(:page_to AS integer) + CAST(:page_slack AS integer)
     ORDER BY f.page_number, f.index_on_page
     LIMIT :limit
     """
