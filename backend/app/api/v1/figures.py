@@ -24,7 +24,21 @@ router = APIRouter(prefix="/figures", tags=["Иллюстрации матери
 
 
 def _to_out(figure: DocumentFigure, document_title: str | None = None) -> FigureOut:
-    data = FigureOut.model_validate(figure)
+    data = FigureOut.model_validate(
+        {
+            "id": figure.id,
+            "document_id": figure.document_id,
+            "page_number": figure.page_number,
+            "index_on_page": figure.index_on_page,
+            "kind": figure.kind,
+            "label": figure.label,
+            "title": figure.title,
+            "labels": figure.labels,
+            "confidence": figure.confidence,
+            "is_active": figure.is_active,
+            "created_at": figure.created_at,
+        }
+    )
     data.caption = figure.caption()
     data.document_title = document_title
     data.labels_count = len(figure.labels or [])
