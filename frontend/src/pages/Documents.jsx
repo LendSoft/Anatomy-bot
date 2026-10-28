@@ -22,8 +22,10 @@ import {
   DownloadOutlined,
   EyeOutlined,
   InboxOutlined,
+  PictureOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 
 import { documents } from '../api/endpoints'
@@ -48,6 +50,7 @@ function formatSize(bytes) {
 
 export default function Documents() {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [data, setData] = useState({ items: [], total: 0 })
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
@@ -173,10 +176,14 @@ export default function Documents() {
     },
     {
       title: 'Объём',
-      width: 130,
+      width: 150,
       render: (_, row) => (
         <div className="stat-hint">
           {row.pages_count} стр. · {row.chunks_count} фрагм.
+          <br />
+          {row.figures_count
+            ? `${row.figures_count} иллюстр.`
+            : 'иллюстраций не найдено'}
         </div>
       ),
     },
@@ -188,7 +195,7 @@ export default function Documents() {
     },
     {
       title: '',
-      width: 130,
+      width: 170,
       render: (_, row) => (
         <Space size="small">
           <Tooltip title="Фрагменты">
@@ -197,6 +204,14 @@ export default function Documents() {
               icon={<EyeOutlined />}
               disabled={!row.chunks_count}
               onClick={() => openChunks(row)}
+            />
+          </Tooltip>
+          <Tooltip title="Иллюстрации, найденные в файле">
+            <Button
+              size="small"
+              icon={<PictureOutlined />}
+              disabled={!row.figures_count}
+              onClick={() => navigate(`/figures?document=${row.id}`)}
             />
           </Tooltip>
           <Tooltip title="Переиндексировать">
@@ -234,7 +249,7 @@ export default function Documents() {
           </Tooltip>
           <Popconfirm
             title="Удалить документ?"
-            description="Вместе с ним удалятся все его фрагменты из поиска."
+            description="Вместе с ним удалятся его фрагменты и иллюстрации из поиска."
             okText="Удалить"
             cancelText="Отмена"
             onConfirm={async () => {
@@ -332,7 +347,9 @@ export default function Documents() {
               <p className="ant-upload-text">Перетащите файл или нажмите для выбора</p>
               <p className="ant-upload-hint">
                 PDF, DOCX, TXT. Отсканированные PDF распознаются автоматически,
-                если в параметрах включён OCR.
+                если в параметрах включён OCR. Рисунки, схемы и страницы
+                атласов извлекаются из файла сами — отдельно загружать
+                изображения не нужно.
               </p>
             </Upload.Dragger>
           </Form.Item>

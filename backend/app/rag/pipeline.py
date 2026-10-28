@@ -20,7 +20,7 @@ from app.llm.factory import get_fallback_llm, get_llm
 from app.models.prompt import Prompt, PromptKind
 from app.rag import prompts as P
 from app.rag import retriever
-from app.rag.retriever import RetrievedChunk
+from app.rag.retriever import RetrievedChunk, RetrievedFigure
 from app.services import settings_service
 
 log = get_logger(__name__)
@@ -43,7 +43,8 @@ class AnswerResult:
     answer: str
     refused: bool
     chunks: list[RetrievedChunk] = field(default_factory=list)
-    images: list[dict] = field(default_factory=list)
+    # Иллюстрации, найденные в тех же материалах, что и ответ
+    figures: list[RetrievedFigure] = field(default_factory=list)
     top_score: float | None = None
 
     llm_provider: str | None = None
@@ -101,7 +102,7 @@ async def answer_question(
     section: str | None = None,
     overrides: dict[str, Any] | None = None,
     include_sources: bool = True,
-    include_images: bool = True,
+    include_figures: bool = True,
 ) -> AnswerResult:
     """Формирует ответ на вопрос.
 
@@ -162,6 +163,26 @@ async def answer_question(
         result.total_ms = int((time.monotonic() - started) * 1000)
         return result
 
+    # ------------------------------------------------------- иллюстрации
+    # Рисунки подбираются до генерации, а не после: модель должна описать,
+    # что на них обозначено, и сослаться на страницу. Если искать их
+    # после, в ответе о рисунках не будет ни слова.
+    if include_figures and cfg["figures_enabled"]:
+        try:
+            result.figures = await retriever.collect_figures(
+                db,
+                question,
+                chunks,
+                limit=int(cfg["figures_max_count"]),
+                min_score=float(cfg["figures_min_score"]),
+                min_confidence=float(cfg["figures_min_confidence"]),
+                page_slack=int(cfg["figures_page_slack"]),
+                search_fallback=bool(cfg["figures_search_fallback"]),
+                section=section,
+            )
+        except Exception as exc:  # noqa: BLE001 — рисунок необязателен, текст ответа важнее
+            log.warning("figure_search_failed", error=str(exc))
+
     # ---------------------------------------------------------- генерация
     system_prompt_row = await _load_prompt(db, PromptKind.system)
     examples_row = await _load_prompt(db, PromptKind.reference_answers)
@@ -173,7 +194,9 @@ async def answer_question(
     history_turns = int(cfg["history_turns"])
     trimmed_history = (history or [])[-history_turns:] if history_turns > 0 else []
 
-    user_message = P.build_user_message(question, chunks, style=str(cfg["answer_style"]))
+    user_message = P.build_user_message(
+        question, chunks, style=str(cfg["answer_style"]), figures=result.figures
+    )
     messages = _build_messages(system_prompt, examples, trimmed_history, user_message)
 
     params = GenerationParams(
@@ -260,18 +283,11 @@ async def answer_question(
         result.total_ms = int((time.monotonic() - started) * 1000)
         return result
 
-    # ------------------------------------------------------- изображения
-    if include_images and cfg["images_enabled"]:
-        try:
-            result.images = await retriever.search_images(
-                db,
-                question,
-                limit=int(cfg["images_max_count"]),
-                min_score=float(cfg["images_min_score"]),
-                section=section,
-            )
-        except Exception as exc:  # noqa: BLE001 — картинка необязательна
-            log.warning("image_search_failed", error=str(exc))
+    # Точные координаты рисунка дописываем сами: номер страницы — то, по
+    # чему студент пойдёт искать изображение, и опечатка модели здесь
+    # дороже лишней строки под ответом
+    if result.figures:
+        answer = f"{answer}\n\n{P.format_figures(result.figures)}"
 
     if include_sources:
         answer = f"{answer}\n\n{P.format_sources(chunks)}"

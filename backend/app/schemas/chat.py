@@ -30,11 +30,21 @@ class SourceOut(BaseModel):
     content: str
 
 
-class ImageRefOut(BaseModel):
-    image_id: int
-    title: str
+class FigureRefOut(BaseModel):
+    """Иллюстрация, на которую бот сослался в ответе."""
+
+    figure_id: int
+    document_id: int
+    document_title: str
+    page_number: int
+    kind: str
+    caption: str
+    # Названия структур, подписанных на изображении
+    labels: list[str]
+    # Нашлась на странице ответа или отдельным поиском
+    source: str
     score: float
-    url: str
+    preview_url: str
 
 
 class AskResponse(BaseModel):
@@ -42,7 +52,7 @@ class AskResponse(BaseModel):
     refused: bool
     message_id: int
     sources: list[SourceOut]
-    images: list[ImageRefOut]
+    figures: list[FigureRefOut]
     top_score: float | None
     llm_model: str | None
     llm_provider: str | None
@@ -70,7 +80,7 @@ class MessageOut(BaseModel):
     created_at: datetime
     status: AnswerStatus | None
     retrieved_chunks: list | None
-    attached_images: list | None
+    attached_figures: list | None
     generation_params: dict | None
     prompt_version: int | None
     llm_provider: str | None

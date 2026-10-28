@@ -37,6 +37,17 @@ _lock = threading.Lock()
 def _load_models() -> None:
     """Грузит модели в фоне, чтобы контейнер отвечал на /health сразу."""
     try:
+        import requests
+        from huggingface_hub import configure_http_backend
+        def insecure_backend_factory():
+            session=requests.Session()
+            session.verify = False
+            return session
+        configure_http_backend(
+            backend_factory=insecure_backend_factory
+        )
+
+
         from sentence_transformers import CrossEncoder, SentenceTransformer
 
         log.info("Загрузка модели эмбеддингов %s на %s", EMBEDDING_MODEL, DEVICE)

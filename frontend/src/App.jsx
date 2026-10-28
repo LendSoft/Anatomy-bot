@@ -6,7 +6,7 @@ import AdminLayout from './components/AdminLayout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Documents from './pages/Documents'
-import Images from './pages/Images'
+import Figures from './pages/Figures'
 import Prompts from './pages/Prompts'
 import Settings from './pages/Settings'
 import Playground from './pages/Playground'
@@ -50,7 +50,7 @@ export default function App() {
       >
         <Route index element={<Dashboard />} />
         <Route path="documents" element={<Documents />} />
-        <Route path="images" element={<Images />} />
+        <Route path="figures" element={<Figures />} />
         <Route path="prompts" element={<Prompts />} />
         <Route path="settings" element={<Settings />} />
         <Route path="playground" element={<Playground />} />

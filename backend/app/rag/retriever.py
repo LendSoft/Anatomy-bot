@@ -261,55 +261,302 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, x))))
 
 
-async def search_images(
-    db: AsyncSession,
-    query: str,
-    *,
-    limit: int = 2,
-    min_score: float = 0.45,
-    section: str | None = None,
-) -> list[dict]:
-    """Подбор иллюстраций из атласов к ответу."""
-    qvec = await embeddings.embed_one(query, kind="query")
+# ---------------------------------------------------------------- иллюстрации
 
+
+@dataclass
+class RetrievedFigure:
+    """Иллюстрация, найденная в том же материале, что и ответ."""
+
+    figure_id: int
+    document_id: int
+    page_number: int
+    kind: str
+    label: str | None
+    title: str | None
+    labels: list[str]
+    document_title: str
+    document_authors: str | None
+    confidence: float
+
+    # Откуда взялась: рисунок на странице найденного фрагмента или
+    # прямое совпадение по подписи
+    source: str = "chunk_page"
+    # Оценка фрагмента, на чьей странице лежит рисунок
+    chunk_score: float = 0.0
+    # Близость вопроса к подписи и выноскам самого рисунка
+    relevance: float = 0.0
+    score: float = 0.0
+
+    def caption(self) -> str:
+        parts = [p for p in (self.label, self.title) if p]
+        if parts:
+            return " ".join(parts)
+        return {
+            "plate": "иллюстрация на всю страницу",
+            "page": "отсканированная страница",
+            "table": "таблица",
+        }.get(self.kind, "рисунок без подписи")
+
+    def citation(self) -> str:
+        """Где искать рисунок — это и есть то, что уходит студенту."""
+        where = f"«{self.document_title}»"
+        if self.page_number:
+            where += f", с. {self.page_number}"
+        return where
+
+    def describe(self) -> str:
+        """Строка для списка иллюстраций под ответом."""
+        return f"{self.caption()} — {self.citation()}"
+
+    def to_log_dict(self) -> dict:
+        return {
+            "figure_id": self.figure_id,
+            "document_id": self.document_id,
+            "document_title": self.document_title,
+            "page_number": self.page_number,
+            "kind": self.kind,
+            "label": self.label,
+            "title": self.title,
+            "labels": self.labels[:40],
+            "source": self.source,
+            "chunk_score": round(self.chunk_score, 4),
+            "relevance": round(self.relevance, 4),
+            "score": round(self.score, 4),
+        }
+
+
+def _figure_from_row(
+    row, source: str, *, chunk_score: float = 0.0, relevance: float = 0.0
+) -> RetrievedFigure:
+    figure = RetrievedFigure(
+        figure_id=row[0],
+        document_id=row[1],
+        page_number=row[2],
+        kind=row[3].value if hasattr(row[3], "value") else str(row[3]),
+        label=row[4],
+        title=row[5],
+        labels=list(row[6] or []),
+        document_title=row[7],
+        document_authors=row[8],
+        confidence=float(row[9]),
+        source=source,
+        chunk_score=chunk_score,
+        relevance=relevance,
+    )
+    figure.score = _figure_score(figure)
+    return figure
+
+
+# Вес близости вопроса к самому рисунку в итоговой оценке. Половина на
+# половину: рисунок на нужной странице, но про другое, прикладывать не
+# стоит, а рисунок с подходящей подписью со случайной страницы — тем более
+RELEVANCE_WEIGHT = 0.5
+
+
+def _figure_score(figure: RetrievedFigure) -> float:
+    """Итоговая оценка иллюстрации.
+
+    Складывается из двух вещей: насколько релевантен фрагмент, на чьей
+    странице рисунок лежит, и насколько сам рисунок (подпись и выноски)
+    отвечает вопросу. Без второго слагаемого бот прикладывал бы рисунок
+    к каждому ответу: в учебнике иллюстрация есть почти на каждом
+    развороте, и одной близости по странице мало.
+    """
+    if figure.source == "figure_search":
+        # Найден прямым поиском — страницы фрагмента за ним не стоит
+        return figure.relevance
+
+    if figure.relevance <= 0.0:
+        # Вектора у рисунка нет (эмбеддинг не посчитан) — опираемся только
+        # на фрагмент, но с запасом вниз, чтобы такие шли после остальных
+        return figure.chunk_score * (1.0 - RELEVANCE_WEIGHT)
+
+    return (
+        (1.0 - RELEVANCE_WEIGHT) * figure.chunk_score
+        + RELEVANCE_WEIGHT * figure.relevance
+    )
+
+
+_FIGURE_COLUMNS = """
+    f.id, f.document_id, f.page_number, f.kind, f.label, f.title, f.labels,
+    d.title, d.authors, f.confidence
+"""
+
+# Иллюстрации со страниц найденных фрагментов. Основной путь: если ответ
+# собран по странице, на которой есть рисунок, студенту нужен именно он.
+# Вектор вопроса здесь тоже нужен — чтобы отличить рисунок по теме ответа
+# от рисунка, случайно оказавшегося на том же развороте.
+_FIGURES_BY_PAGE_SQL = text(
+    f"""
+    SELECT {_FIGURE_COLUMNS},
+           CASE
+               WHEN f.embedding IS NULL THEN NULL
+               ELSE 1 - (f.embedding <=> CAST(:qvec AS vector))
+           END AS relevance
+    FROM document_figures f
+    JOIN documents d ON d.id = f.document_id
+    WHERE f.is_active
+      AND d.is_active
+      AND f.confidence >= :min_confidence
+      -- Диапазон страниц фрагмента, плюс соседняя страница: рисунок
+      -- часто стоит на развороте рядом с описывающим его текстом
+      AND f.document_id = :document_id
+      AND f.page_number BETWEEN :page_from - :page_slack AND :page_to + :page_slack
+    ORDER BY f.page_number, f.index_on_page
+    LIMIT :limit
+    """
+)
+
+# Прямое совпадение по подписи и выноскам — на случай, когда текст
+# страницы в поиск не попал. У страницы атласа текста, кроме выносок,
+# почти нет, и фрагмент по ней может не набрать веса.
+_FIGURES_BY_VECTOR_SQL = text(
+    f"""
+    SELECT {_FIGURE_COLUMNS},
+           1 - (f.embedding <=> CAST(:qvec AS vector)) AS score
+    FROM document_figures f
+    JOIN documents d ON d.id = f.document_id
+    WHERE f.embedding IS NOT NULL
+      AND f.is_active
+      AND d.is_active
+      AND d.status = 'ready'
+      AND f.confidence >= :min_confidence
+      AND (CAST(:section AS varchar) IS NULL OR d.section = CAST(:section AS varchar))
+    ORDER BY f.embedding <=> CAST(:qvec AS vector)
+    LIMIT :limit
+    """
+)
+
+
+async def figures_for_chunks(
+    db: AsyncSession,
+    chunks: list[RetrievedChunk],
+    query_vector: list[float],
+    *,
+    page_slack: int = 1,
+    min_confidence: float = 0.5,
+    per_chunk_limit: int = 6,
+) -> list[RetrievedFigure]:
+    """Иллюстрации, лежащие на страницах найденных фрагментов."""
+    found: dict[int, RetrievedFigure] = {}
+    qvec = str(query_vector)
+
+    for chunk in chunks:
+        if chunk.page_from is None:
+            continue
+        rows = (
+            await db.execute(
+                _FIGURES_BY_PAGE_SQL,
+                {
+                    "qvec": qvec,
+                    "document_id": chunk.document_id,
+                    "page_from": chunk.page_from,
+                    "page_to": chunk.page_to or chunk.page_from,
+                    "page_slack": page_slack,
+                    "min_confidence": min_confidence,
+                    "limit": per_chunk_limit,
+                },
+            )
+        ).all()
+
+        for row in rows:
+            relevance = float(row[10]) if row[10] is not None else 0.0
+            figure = _figure_from_row(
+                row, source="chunk_page", chunk_score=chunk.score, relevance=relevance
+            )
+            # Один рисунок попадает сразу от нескольких фрагментов —
+            # оставляем вариант с лучшей оценкой
+            existing = found.get(figure.figure_id)
+            if existing is None or figure.score > existing.score:
+                found[figure.figure_id] = figure
+
+    return sorted(found.values(), key=lambda f: f.score, reverse=True)
+
+
+async def search_figures(
+    db: AsyncSession,
+    query_vector: list[float],
+    *,
+    limit: int = 10,
+    min_score: float = 0.45,
+    min_confidence: float = 0.5,
+    section: str | None = None,
+) -> list[RetrievedFigure]:
+    """Поиск иллюстрации напрямую по подписи и выноскам."""
     rows = (
         await db.execute(
-            text(
-                """
-                SELECT id, title, description, stored_path, thumbnail_path,
-                       source_title, source_page, vk_attachment_id,
-                       1 - (embedding <=> CAST(:qvec AS vector)) AS score
-                FROM atlas_images
-                WHERE embedding IS NOT NULL
-                  AND is_active
-                  AND (CAST(:section AS varchar) IS NULL OR section = CAST(:section AS varchar))
-                ORDER BY embedding <=> CAST(:qvec AS vector)
-                LIMIT :limit
-                """
-            ),
-            {"qvec": str(qvec), "limit": limit * 3, "section": section},
+            _FIGURES_BY_VECTOR_SQL,
+            {
+                "qvec": str(query_vector),
+                "limit": limit * 3,
+                "section": section,
+                "min_confidence": min_confidence,
+            },
         )
     ).all()
 
-    result = []
+    result: list[RetrievedFigure] = []
     for row in rows:
-        score = float(row[8])
-        if score < min_score:
+        relevance = float(row[10])
+        if relevance < min_score:
             continue
         result.append(
-            {
-                "image_id": row[0],
-                "title": row[1],
-                "description": row[2],
-                "stored_path": row[3],
-                "thumbnail_path": row[4],
-                "source_title": row[5],
-                "source_page": row[6],
-                "vk_attachment_id": row[7],
-                "score": round(score, 4),
-            }
+            _figure_from_row(row, source="figure_search", relevance=relevance)
         )
         if len(result) >= limit:
             break
 
     return result
+
+
+async def collect_figures(
+    db: AsyncSession,
+    query: str,
+    chunks: list[RetrievedChunk],
+    *,
+    limit: int = 3,
+    min_score: float = 0.45,
+    min_confidence: float = 0.5,
+    page_slack: int = 1,
+    search_fallback: bool = True,
+    section: str | None = None,
+) -> list[RetrievedFigure]:
+    """Иллюстрации к ответу: сначала со страниц ответа, потом поиском.
+
+    Приоритет у рисунков со страниц найденных фрагментов: они заведомо
+    относятся к тому, о чём написан ответ. Прямой поиск добавляется,
+    только если набрать нужное число не удалось, — иначе бот начнёт
+    прикладывать рисунки из других разделов, похожие лишь по подписи.
+
+    Порог min_score применяется к обоим путям: в учебнике иллюстрация
+    стоит почти на каждом развороте, и без порога бот прикладывал бы
+    рисунок к любому ответу, в том числе не относящийся к вопросу.
+    """
+    query_vector = await embeddings.embed_one(query, kind="query")
+
+    figures = [
+        figure
+        for figure in await figures_for_chunks(
+            db,
+            chunks,
+            query_vector,
+            page_slack=page_slack,
+            min_confidence=min_confidence,
+        )
+        if figure.score >= min_score
+    ]
+
+    if len(figures) < limit and search_fallback:
+        known = {figure.figure_id for figure in figures}
+        extra = await search_figures(
+            db,
+            query_vector,
+            limit=limit,
+            min_score=min_score,
+            min_confidence=min_confidence,
+            section=section,
+        )
+        figures.extend(figure for figure in extra if figure.figure_id not in known)
+
+    return figures[:limit]

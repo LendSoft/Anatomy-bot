@@ -16,7 +16,7 @@ from app.schemas.chat import (
     AskRequest,
     AskResponse,
     FeedbackRequest,
-    ImageRefOut,
+    FigureRefOut,
     SourceOut,
 )
 from app.schemas.common import MessageResponse
@@ -55,14 +55,20 @@ async def ask(payload: AskRequest, db: DbSession, admin: CurrentAdmin) -> AskRes
             )
             for chunk in result.chunks
         ],
-        images=[
-            ImageRefOut(
-                image_id=image["image_id"],
-                title=image["title"],
-                score=image["score"],
-                url=f"/api/v1/images/{image['image_id']}/file",
+        figures=[
+            FigureRefOut(
+                figure_id=figure.figure_id,
+                document_id=figure.document_id,
+                document_title=figure.document_title,
+                page_number=figure.page_number,
+                kind=figure.kind,
+                caption=figure.caption(),
+                labels=figure.labels,
+                source=figure.source,
+                score=round(figure.score, 4),
+                preview_url=f"/api/v1/figures/{figure.figure_id}/preview",
             )
-            for image in result.images
+            for figure in result.figures
         ],
         top_score=result.top_score,
         llm_model=result.llm_model,

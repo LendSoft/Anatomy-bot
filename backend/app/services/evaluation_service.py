@@ -129,7 +129,7 @@ async def run_test_set(
                     question.question,
                     overrides=overrides,
                     include_sources=False,
-                    include_images=False,
+                    include_figures=False,
                 )
             except Exception as exc:  # noqa: BLE001 — один вопрос не должен рушить прогон
                 log.exception("test_question_failed", question_id=question.id)

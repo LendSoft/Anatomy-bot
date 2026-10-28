@@ -127,7 +127,7 @@ async def ask(
         created_at=datetime.now(UTC),
         status=status,
         retrieved_chunks=[c.to_log_dict() for c in result.chunks],
-        attached_images=result.images or None,
+        attached_figures=[f.to_log_dict() for f in result.figures] or None,
         generation_params=result.generation_params or None,
         prompt_version=result.prompt_version,
         llm_provider=result.llm_provider,

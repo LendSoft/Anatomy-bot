@@ -74,7 +74,15 @@ class Document(Base, TimestampMixin):
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     extra: Mapped[dict | None] = mapped_column(JSONB)
 
+    # Сколько иллюстраций найдено в файле при индексации
+    figures_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", passive_deletes=True
+    )
+    # В кавычках, потому что DocumentFigure импортировать здесь нельзя:
+    # он сам ссылается на Document. Имя разрешает реестр SQLAlchemy
+    figures: Mapped[list["DocumentFigure"]] = relationship(  # noqa: F821, UP037
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True
     )
 

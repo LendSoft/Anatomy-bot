@@ -15,9 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.document import Document, DocumentChunk, DocumentStatus
+from app.models.figure import DocumentFigure
 from app.rag import embeddings, parsers
 from app.rag.chunking import chunk_document
-from app.services import settings_service
+from app.services import figure_service, settings_service
 
 log = get_logger(__name__)
 
@@ -40,6 +41,30 @@ async def _set_status(
         values["error_message"] = error
     await db.execute(update(Document).where(Document.id == document_id).values(**values))
     await db.commit()
+
+
+async def _save_figures(
+    db: AsyncSession, document_id: int, parsed: parsers.ParsedDocument
+) -> int:
+    """Сохраняет найденные в документе иллюстрации.
+
+    Нумерация внутри страницы идёт по порядку разбора — она же входит в
+    уникальный индекс, поэтому считается здесь, а не в парсере.
+    """
+    saved = 0
+    for page in parsed.pages:
+        for index_on_page, figure in enumerate(page.figures):
+            db.add(figure_service.to_model(document_id, figure, index_on_page))
+            saved += 1
+
+        # Коммитим постранично: в атласе на две тысячи страниц держать все
+        # объекты в сессии незачем
+        if saved and saved % 200 == 0:
+            await db.commit()
+
+    await db.commit()
+    log.info("figures_saved", document_id=document_id, figures=saved)
+    return saved
 
 
 async def index_document(db: AsyncSession, document_id: int) -> None:
@@ -101,11 +126,19 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
             ocr=parsed.used_ocr,
         )
 
-        # Переиндексация: старые фрагменты убираем целиком
+        # Переиндексация: старые фрагменты и иллюстрации убираем целиком
         await db.execute(
             delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         )
+        await db.execute(
+            delete(DocumentFigure).where(DocumentFigure.document_id == document_id)
+        )
         await db.commit()
+        # Координаты рисунков после нового разбора другие — вырезанные по
+        # старым предпросмотры показывали бы не то, что подписано
+        figure_service.clear_previews(document_id)
+
+        figures_saved = await _save_figures(db, document_id, parsed)
 
         # ------------------------------------------------------ эмбеддинги
         await _set_status(db, document_id, DocumentStatus.embedding, progress=45)
@@ -135,8 +168,22 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
             )
             await db.commit()
 
-            progress = 45 + int(50 * (start + len(batch)) / len(chunks))
+            # На эмбеддинги фрагментов отводим 45–90%, остаток — иллюстрациям
+            progress = 45 + int(45 * (start + len(batch)) / len(chunks))
             await _set_status(db, document_id, DocumentStatus.embedding, progress=progress)
+
+        # ------------------------------------------- эмбеддинги иллюстраций
+        # Нужны, чтобы находить рисунок по вопросу напрямую: у страницы
+        # атласа текста нет, кроме надписей на самом изображении
+        if figures_saved:
+            await _set_status(db, document_id, DocumentStatus.embedding, progress=90)
+            try:
+                await figure_service.embed_document_figures(db, document_id)
+            except Exception as exc:  # noqa: BLE001 — ссылки на рисунки работают и без вектора
+                log.warning(
+                    "figure_embedding_failed", document_id=document_id, error=str(exc)
+                )
+                await db.rollback()
 
         # --------------------------------------------------------- готово
         await db.execute(
@@ -148,12 +195,22 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
                 error_message=None,
                 pages_count=len(parsed.pages),
                 chunks_count=len(chunks),
+                figures_count=figures_saved,
                 indexed_at=datetime.now(UTC),
-                extra={"parser": parsed.parser, "used_ocr": parsed.used_ocr},
+                extra={
+                    "parser": parsed.parser,
+                    "used_ocr": parsed.used_ocr,
+                    "figures": figures_saved,
+                },
             )
         )
         await db.commit()
-        log.info("indexing_done", document_id=document_id, chunks=len(chunks))
+        log.info(
+            "indexing_done",
+            document_id=document_id,
+            chunks=len(chunks),
+            figures=figures_saved,
+        )
 
     except Exception as exc:  # noqa: BLE001 — ошибку нужно показать в админке
         log.exception("indexing_failed", document_id=document_id)
@@ -171,8 +228,9 @@ async def delete_document(db: AsyncSession, document_id: int) -> bool:
         return False
 
     stored_path = document.stored_path
-    await db.delete(document)  # фрагменты уходят каскадом
+    await db.delete(document)  # фрагменты и иллюстрации уходят каскадом
     await db.commit()
 
     storage.delete_file(stored_path)
+    figure_service.clear_previews(document_id)
     return True

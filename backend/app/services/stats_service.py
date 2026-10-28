@@ -51,12 +51,13 @@ async def overview(db: AsyncSession, days: int = 30) -> dict[str, Any]:
         )
     ).mappings().one()
 
-    images = (
+    figures = (
         await db.execute(
             text(
                 "SELECT count(*) AS total, "
-                "count(*) FILTER (WHERE embedding IS NOT NULL) AS indexed "
-                "FROM atlas_images"
+                "count(*) FILTER (WHERE embedding IS NOT NULL) AS indexed, "
+                "count(*) FILTER (WHERE label IS NOT NULL) AS labeled "
+                "FROM document_figures WHERE is_active"
             )
         )
     ).mappings().one()
@@ -92,8 +93,10 @@ async def overview(db: AsyncSession, days: int = 30) -> dict[str, Any]:
         "documents_failed": library["documents_failed"],
         "chunks": library["chunks"],
         "pages": library["pages"],
-        "images_total": images["total"],
-        "images_indexed": images["indexed"],
+        "figures_total": figures["total"],
+        "figures_indexed": figures["indexed"],
+        # С подписью «Рис. N» — разобраны надёжно
+        "figures_labeled": figures["labeled"],
         "vk_users_total": users["total"],
         "vk_users_active": users["active"],
     }

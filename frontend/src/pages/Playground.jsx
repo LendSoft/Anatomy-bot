@@ -24,7 +24,7 @@ import { DislikeOutlined, LikeOutlined, SendOutlined } from '@ant-design/icons'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-import { chat, images as imagesApi } from '../api/endpoints'
+import { chat, figures as figuresApi } from '../api/endpoints'
 
 const EXAMPLES = [
   'Какие ветви имеет наружная сонная артерия?',
@@ -162,21 +162,34 @@ export default function Playground() {
                 <Markdown remarkPlugins={[remarkGfm]}>{result.answer}</Markdown>
               </div>
 
-              {result.images?.length > 0 && (
+              {result.figures?.length > 0 && (
                 <>
                   <Divider orientation="left" plain style={{ fontSize: 13 }}>
-                    Приложенные изображения
+                    Иллюстрации из материалов
                   </Divider>
-                  <Space wrap>
-                    {result.images.map((image) => (
-                      <div key={image.image_id} style={{ width: 200 }}>
+                  <Space wrap align="start">
+                    {result.figures.map((figure) => (
+                      <div key={figure.figure_id} style={{ width: 230 }}>
                         <Image
-                          src={imagesApi.fileUrl(image.image_id, true)}
-                          alt={image.title}
-                          preview={{ src: imagesApi.fileUrl(image.image_id) }}
+                          src={figuresApi.previewUrl(figure.figure_id)}
+                          alt={figure.caption}
+                          style={{ background: '#fafafa' }}
+                          // У иллюстраций из DOCX координат нет, вырезать нечего
+                          fallback="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                         />
+                        <div style={{ fontSize: 12, marginTop: 4 }}>{figure.caption}</div>
                         <div className="stat-hint">
-                          {image.title} · {image.score.toFixed(2)}
+                          {figure.document_title}
+                          {figure.page_number ? `, с. ${figure.page_number}` : ''}
+                        </div>
+                        <div className="stat-hint">
+                          {figure.source === 'chunk_page'
+                            ? 'со страницы ответа'
+                            : 'найдена поиском'}{' '}
+                          · {figure.score.toFixed(2)}
+                          {figure.labels?.length > 0
+                            ? ` · обозначений: ${figure.labels.length}`
+                            : ''}
                         </div>
                       </div>
                     ))}

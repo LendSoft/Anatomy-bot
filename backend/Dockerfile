@@ -8,12 +8,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# tesseract с русским и английским — нужен для OCR отсканированных учебников;
-# poppler-utils требуется pdf2image для растеризации страниц перед распознаванием
+# tesseract с русским и английским — нужен для OCR отсканированных учебников.
+# Растеризацию страниц перед распознаванием делает PyMuPDF, поэтому
+# poppler-utils больше не требуется.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         libgomp1 \
-        poppler-utils \
         tesseract-ocr \
         tesseract-ocr-rus \
         tesseract-ocr-eng \

@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.chat import Channel
-from app.models.image import AtlasImage
+from app.models.figure import DocumentFigure
 from app.models.user import VkUser
-from app.services import chat_service, settings_service
+from app.services import chat_service, figure_service, settings_service
 from app.vk.api import VkApi
 
 log = get_logger(__name__)
@@ -106,32 +106,34 @@ def split_message(text: str) -> list[str]:
     return parts
 
 
-async def _attachment_for_images(
-    db: AsyncSession, vk_api: VkApi, peer_id: int, images: list[dict]
+async def _attachment_for_figures(
+    db: AsyncSession, vk_api: VkApi, peer_id: int, figures: list
 ) -> str | None:
-    """Готовит вложение с иллюстрациями.
+    """Готовит вложение с иллюстрациями из учебника.
 
-    Идентификатор загруженной картинки сохраняем: повторно грузить один
-    и тот же рисунок из атласа на серверы VK ни к чему.
+    Сама вырезка строится из исходного PDF по координатам рисунка, а
+    идентификатор загруженного вложения сохраняется: повторно грузить
+    один и тот же рисунок на серверы VK ни к чему.
     """
     attachments: list[str] = []
 
-    for image_info in images:
-        image = await db.get(AtlasImage, image_info["image_id"])
-        if image is None:
+    for retrieved in figures:
+        figure = await db.get(DocumentFigure, retrieved.figure_id)
+        if figure is None:
             continue
 
-        if image.vk_attachment_id:
-            attachments.append(image.vk_attachment_id)
+        if figure.vk_attachment_id:
+            attachments.append(figure.vk_attachment_id)
             continue
 
-        path = Path(image.stored_path)
-        if not path.exists():
+        path = await figure_service.preview_for(db, figure)
+        if path is None or not Path(path).exists():
+            # Ссылка на файл и страницу в тексте ответа есть и без картинки
             continue
 
-        attachment_id = await vk_api.upload_photo(peer_id, path)
+        attachment_id = await vk_api.upload_photo(peer_id, Path(path))
         if attachment_id:
-            image.vk_attachment_id = attachment_id
+            figure.vk_attachment_id = attachment_id
             await db.commit()
             attachments.append(attachment_id)
 
@@ -179,8 +181,8 @@ async def handle_message(
             await typing_task
 
     attachment = None
-    if result.images and not result.refused:
-        attachment = await _attachment_for_images(db, vk_api, peer_id, result.images)
+    if result.figures and not result.refused:
+        attachment = await _attachment_for_figures(db, vk_api, peer_id, result.figures)
 
     chunks = split_message(result.answer)
     for i, chunk in enumerate(chunks):

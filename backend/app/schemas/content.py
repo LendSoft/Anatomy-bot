@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.document import DocumentStatus
+from app.models.figure import FigureKind
 from app.models.prompt import PromptKind
 
 # ---------------------------------------------------------------- документы
@@ -30,6 +31,7 @@ class DocumentOut(BaseModel):
     progress: int
     pages_count: int
     chunks_count: int
+    figures_count: int
     is_active: bool
     indexed_at: datetime | None
     created_at: datetime
@@ -57,42 +59,41 @@ class ChunkOut(BaseModel):
     token_count: int
 
 
-# -------------------------------------------------------------- изображения
+# -------------------------------------------------------------- иллюстрации
 
 
-class ImageOut(BaseModel):
+class FigureOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    title: str
-    description: str | None
-    structures_ru: list[str] | None
-    structures_lat: list[str] | None
-    section: str | None
-    source_title: str | None
-    source_authors: str | None
-    source_page: int | None
-    license_note: str | None
-    original_filename: str
-    mime_type: str | None
-    size_bytes: int
-    width: int | None
-    height: int | None
+    document_id: int
+    page_number: int
+    index_on_page: int
+    kind: FigureKind
+    label: str | None
+    title: str | None
+    labels: list[str] | None
+    confidence: float
     is_active: bool
     created_at: datetime
+
+    # Вычисляемые поля для панели
+    caption: str = ""
+    document_title: str | None = None
+    labels_count: int = 0
     is_indexed: bool = False
+    preview_url: str | None = None
 
 
-class ImageUpdate(BaseModel):
-    title: str | None = Field(None, max_length=512)
-    description: str | None = None
-    structures_ru: list[str] | None = None
-    structures_lat: list[str] | None = None
-    section: str | None = Field(None, max_length=255)
-    source_title: str | None = Field(None, max_length=512)
-    source_authors: str | None = Field(None, max_length=512)
-    source_page: int | None = Field(None, ge=1)
-    license_note: str | None = Field(None, max_length=512)
+class FigureUpdate(BaseModel):
+    """Правка разбора вручную.
+
+    Менять можно только подпись и признак активности: координаты и
+    страница берутся из файла, править их бессмысленно.
+    """
+
+    label: str | None = Field(None, max_length=64)
+    title: str | None = Field(None, max_length=1024)
     is_active: bool | None = None
 
 

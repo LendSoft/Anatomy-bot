@@ -12,7 +12,7 @@ from typing import Any
 
 from app.core.logging import get_logger, setup_logging
 from app.db.session import db_session
-from app.services import document_service, evaluation_service, image_service
+from app.services import document_service, evaluation_service, figure_service
 from app.worker.queue import redis_settings
 
 setup_logging()
@@ -25,12 +25,20 @@ async def index_document(ctx: dict, document_id: int) -> None:
         await document_service.index_document(db, document_id)
 
 
-async def index_image(ctx: dict, image_id: int) -> None:
+async def embed_figures(ctx: dict, document_id: int) -> None:
+    """Пересчёт векторов иллюстраций документа.
+
+    Отдельная задача нужна для случая, когда документ уже разобран, а
+    векторы рисунков посчитать не удалось — например, сервис эмбеддингов
+    в тот момент ещё грузил модели.
+    """
     async with db_session() as db:
         try:
-            await image_service.index_image(db, image_id)
-        except RuntimeError as exc:
-            log.warning("task_index_image_failed", image_id=image_id, error=str(exc))
+            await figure_service.embed_document_figures(db, document_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "task_embed_figures_failed", document_id=document_id, error=str(exc)
+            )
 
 
 async def run_test_set(ctx: dict, run_id: int, overrides: dict[str, Any] | None = None) -> None:
@@ -53,7 +61,7 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [index_document, index_image, run_test_set]
+    functions = [index_document, embed_figures, run_test_set]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = redis_settings()

@@ -27,9 +27,9 @@ const MENU_ITEMS = [
     label: <Link to="/documents">Материалы</Link>,
   },
   {
-    key: '/images',
+    key: '/figures',
     icon: <PictureOutlined />,
-    label: <Link to="/images">Изображения</Link>,
+    label: <Link to="/figures">Иллюстрации</Link>,
   },
   {
     key: '/glossary',

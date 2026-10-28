@@ -196,9 +196,9 @@ export default function Dashboard() {
                 <div className="stat-hint">страниц: {overview?.pages || 0}</div>
               </Col>
               <Col span={12}>
-                <Statistic title="Изображений" value={overview?.images_total || 0} />
+                <Statistic title="Иллюстраций" value={overview?.figures_total || 0} />
                 <div className="stat-hint">
-                  в поиске: {overview?.images_indexed || 0}
+                  с подписью: {overview?.figures_labeled || 0}
                 </div>
               </Col>
               <Col span={12}>

@@ -10,7 +10,11 @@
 
 from __future__ import annotations
 
-from app.rag.retriever import RetrievedChunk
+from app.rag.retriever import RetrievedChunk, RetrievedFigure
+
+# Сколько выносок рисунка передавать модели. На странице атласа их бывает
+# под сотню: все они в промпт не нужны, а контекст выедают заметно
+MAX_FIGURE_LABELS = 40
 
 REFUSAL_MARKER = "НЕТ_В_БАЗЕ"
 
@@ -31,6 +35,22 @@ DEFAULT_SYSTEM_PROMPT = f"""\
 а не общим списком в конце.
 4. Не смешивай фрагменты, которые противоречат друг другу. Если противоречие \
 есть — укажи оба варианта с их источниками.
+
+ЕСЛИ ПОСЛЕ ФРАГМЕНТОВ ИДЁТ РАЗДЕЛ «ИЛЛЮСТРАЦИИ»:
+
+5. Разбери словами, что на рисунке изображено и что на нём обозначено. \
+«Обозначения» в разделе — это надписи-выноски с самого рисунка, то есть \
+названия структур, подписанных на изображении. Используй их как источник \
+наравне с текстом: перечисли структуры списком, с латинскими названиями.
+6. В конце ответа скажи, где посмотреть сам рисунок: его подпись, название \
+материала и номер страницы — ровно так, как они указаны в разделе. Пиши \
+обычной фразой: «Изображение приведено в ... на с. ...».
+7. Не придумывай номера рисунков и страниц и не ссылайся на иллюстрации, \
+которых в разделе нет. Если раздела «ИЛЛЮСТРАЦИИ» нет — про рисунки не \
+упоминай вовсе.
+8. Обозначения — это обрывки подписей, а не связный текст. Восстанавливай по \
+ним строение, но не утверждай того, чего в них нет. Если по обозначениям \
+непонятно, что именно показано, просто укажи, где искать рисунок.
 
 КАК ОФОРМЛЯТЬ ОТВЕТ:
 
@@ -77,6 +97,27 @@ DEFAULT_REFERENCE_ANSWERS: list[dict[str, str]] = [
             "(пейеровы бляшки), в тощей — преимущественно одиночные [2].\n"
             "* **Кровоснабжение:** брыжейка тощей кишки содержит 1–2 ряда сосудистых "
             "аркад, подвздошной — 3–5 рядов [1]."
+        ),
+    },
+    {
+        "question": "Что показано на рисунке строения наружного анального сфинктера?",
+        "answer": (
+            "На изображении показано строение наружного сфинктера заднего "
+            "прохода и структуры, поддерживающие прямую кишку [1].\n\n"
+            "Обозначены следующие структуры:\n"
+            "* прямокишечно-маточное углубление (excavatio rectouterina), "
+            "дугласов карман\n"
+            "* пузырно-маточное углубление (excavatio vesicouterina)\n"
+            "* наружный сфинктер заднего прохода (m. sphincter ani externus)\n"
+            "* мышца, поднимающая задний проход (m. levator ani), образующая "
+            "диафрагму таза\n"
+            "* глубокая поперечная мышца промежности (m. transversus perinei "
+            "profundus)\n\n"
+            "Срез выполнен в парамедианной (сагиттальной) плоскости, поэтому "
+            "видно взаимное положение мочевого пузыря, влагалища и прямой "
+            "кишки [1].\n\n"
+            "Изображение приведено в «Netter's Obstetrics and Gynecology» "
+            "на с. 56 (Figure 23.1)."
         ),
     },
     {
@@ -147,17 +188,54 @@ def build_context(chunks: list[RetrievedChunk]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def build_user_message(question: str, chunks: list[RetrievedChunk], style: str = "balanced") -> str:
+def build_figures_context(figures: list[RetrievedFigure]) -> str:
+    """Раздел «ИЛЛЮСТРАЦИИ» для промпта.
+
+    Модель должна получить три вещи по каждому рисунку: подпись из книги,
+    где он лежит (файл и страница) и что на нём обозначено. Выноски идут
+    последними и отдельной строкой — так модель не путает их с подписью
+    и не выдаёт перечень обозначений за связный текст учебника.
+    """
+    if not figures:
+        return ""
+
+    blocks = []
+    for i, figure in enumerate(figures, start=1):
+        lines = [f"Иллюстрация {i}: {figure.caption()}"]
+        lines.append(f"Где находится: {figure.citation()}")
+        if figure.labels:
+            labels = "; ".join(figure.labels[:MAX_FIGURE_LABELS])
+            lines.append(f"Обозначения на изображении: {labels}")
+        else:
+            lines.append(
+                "Обозначения на изображении: не распознаны — опиши рисунок по "
+                "тексту фрагментов и просто укажи, где его посмотреть."
+            )
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
+
+
+def build_user_message(
+    question: str,
+    chunks: list[RetrievedChunk],
+    style: str = "balanced",
+    figures: list[RetrievedFigure] | None = None,
+) -> str:
     style_hint = {
         "short": "Ответь кратко: только суть, без развёрнутых пояснений.",
         "balanced": "Ответь по существу, с необходимыми пояснениями.",
         "detailed": "Ответь подробно, разбери все аспекты вопроса.",
     }.get(style, "Ответь по существу, с необходимыми пояснениями.")
 
-    return (
-        f"ФРАГМЕНТЫ УЧЕБНЫХ МАТЕРИАЛОВ:\n\n{build_context(chunks)}\n\n"
-        f"---\n\nВОПРОС СТУДЕНТА: {question}\n\n{style_hint}"
-    )
+    parts = [f"ФРАГМЕНТЫ УЧЕБНЫХ МАТЕРИАЛОВ:\n\n{build_context(chunks)}"]
+
+    figures_context = build_figures_context(figures or [])
+    if figures_context:
+        parts.append(f"ИЛЛЮСТРАЦИИ:\n\n{figures_context}")
+
+    parts.append(f"ВОПРОС СТУДЕНТА: {question}\n\n{style_hint}")
+    return "\n\n---\n\n".join(parts)
 
 
 def format_sources(chunks: list[RetrievedChunk]) -> str:
@@ -166,3 +244,16 @@ def format_sources(chunks: list[RetrievedChunk]) -> str:
         return ""
     lines = [f"[{i}] {chunk.citation()}" for i, chunk in enumerate(chunks, start=1)]
     return "Источники:\n" + "\n".join(lines)
+
+
+def format_figures(figures: list[RetrievedFigure]) -> str:
+    """Список иллюстраций под ответом.
+
+    Дописывается программно, а не моделью: номер страницы — то, по чему
+    студент пойдёт искать рисунок в книге, и ошибиться в нём нельзя.
+    Модель упоминает рисунок в тексте, а точные координаты даёт этот блок.
+    """
+    if not figures:
+        return ""
+    lines = [f"• {figure.describe()}" for figure in figures]
+    return "Где посмотреть изображения:\n" + "\n".join(lines)

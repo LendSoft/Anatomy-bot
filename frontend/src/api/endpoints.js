@@ -38,24 +38,16 @@ export const documents = {
     }),
 }
 
-export const images = {
-  list: (params) => api.get('/images', { params }),
-  update: (id, payload) => api.patch(`/images/${id}`, payload),
-  remove: (id) => api.delete(`/images/${id}`),
-  reindexAll: () => api.post('/images/reindex'),
-  fileUrl: (id, thumbnail = false) =>
-    `${import.meta.env.VITE_API_BASE_URL || '/api/v1'}/images/${id}/file${
-      thumbnail ? '?thumbnail=true' : ''
-    }`,
-  upload: (formData, onProgress) =>
-    api.post('/images', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: (event) => {
-        if (onProgress && event.total) {
-          onProgress(Math.round((event.loaded * 100) / event.total))
-        }
-      },
-    }),
+// Иллюстрации не загружаются — они извлекаются из самих материалов при
+// индексации, поэтому здесь нет upload, только просмотр и правка разбора
+export const figures = {
+  list: (params) => api.get('/figures', { params }),
+  get: (id) => api.get(`/figures/${id}`),
+  update: (id, payload) => api.patch(`/figures/${id}`, payload),
+  reembed: (documentId) => api.post(`/figures/reindex/${documentId}`),
+  // Вырезается из исходного PDF по первому обращению
+  previewUrl: (id) =>
+    `${import.meta.env.VITE_API_BASE_URL || '/api/v1'}/figures/${id}/preview`,
 }
 
 export const prompts = {

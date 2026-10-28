@@ -87,8 +87,9 @@ class Message(Base):
     status: Mapped[AnswerStatus | None] = mapped_column(Enum(AnswerStatus, name="answer_status"))
     # Найденные фрагменты: [{"chunk_id", "document_id", "title", "page", "score", "content"}]
     retrieved_chunks: Mapped[list | None] = mapped_column(JSONB)
-    # Приложенные к ответу картинки: [{"image_id", "title", "score"}]
-    attached_images: Mapped[list | None] = mapped_column(JSONB)
+    # Иллюстрации, на которые сослался ответ:
+    # [{"figure_id", "document_title", "page_number", "label", "score"}]
+    attached_figures: Mapped[list | None] = mapped_column(JSONB)
     # Слепок параметров генерации, чтобы понять, на каких настройках получен ответ
     generation_params: Mapped[dict | None] = mapped_column(JSONB)
     prompt_version: Mapped[int | None] = mapped_column(Integer)

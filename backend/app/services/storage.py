@@ -16,11 +16,8 @@ from typing import BinaryIO
 from app.core.config import settings
 
 DOCUMENTS_DIR = "documents"
-IMAGES_DIR = "images"
-THUMBNAILS_DIR = "thumbnails"
 
 ALLOWED_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".txt", ".md"}
-ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 def storage_root() -> Path:
@@ -68,30 +65,3 @@ def delete_file(path: str | Path) -> None:
     file_path.unlink(missing_ok=True)
 
 
-def make_thumbnail(image_path: Path, max_side: int = 512) -> Path | None:
-    """Уменьшенная копия для списка изображений в админке."""
-    from PIL import Image
-
-    try:
-        with Image.open(image_path) as img:
-            img = img.convert("RGB")
-            img.thumbnail((max_side, max_side))
-            target = (
-                storage_root() / THUMBNAILS_DIR / image_path.parent.name
-            )
-            target.mkdir(parents=True, exist_ok=True)
-            thumb_path = target / f"{image_path.stem}.jpg"
-            img.save(thumb_path, "JPEG", quality=85)
-            return thumb_path
-    except Exception:  # noqa: BLE001 — без превью работать можно
-        return None
-
-
-def image_size(image_path: Path) -> tuple[int, int] | None:
-    from PIL import Image
-
-    try:
-        with Image.open(image_path) as img:
-            return img.size
-    except Exception:  # noqa: BLE001
-        return None

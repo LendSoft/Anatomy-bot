@@ -1,12 +1,18 @@
-"""Извлечение текста из учебных материалов.
+"""Извлечение текста и иллюстраций из учебных материалов.
+
+Разбор PDF идёт через PyMuPDF: он отдаёт и текст, и координаты строк, и
+границы картинок за один проход. Координаты обязательны — без них
+невозможно понять, какая подпись относится к какому рисунку и что
+написано внутри изображения (см. app/rag/figures.py).
 
 Порядок для PDF:
-  1. pypdf — быстро и достаточно для книг с текстовым слоем;
+  1. текстовый слой — быстро и достаточно для книг, свёрстанных в вёрстке;
   2. если текста почти нет, документ считается сканом и идёт в OCR;
-  3. docling — когда нужна структура (заголовки, таблицы).
+  3. иллюстрации ищутся в обоих случаях, независимо от текстового слоя.
 
 Номера страниц сохраняются на каждом шаге: без них не получится указать
-источник так, как требует ТЗ.
+источник так, как требует ТЗ, и не получится сослаться на страницу с
+рисунком.
 """
 
 from __future__ import annotations
@@ -16,11 +22,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.logging import get_logger
+from app.rag import figures as figures_mod
+from app.rag.figures import ExtractedFigure, FigureKind
 
 log = get_logger(__name__)
 
 # Ниже этого числа символов на страницу считаем, что текстового слоя нет
 MIN_CHARS_PER_PAGE = 80
+
+# Разрешение растеризации для OCR. 300 dpi — компромисс: ниже падает
+# качество распознавания русских диакритик и мелких выносок, выше
+# страница сканируется ощутимо дольше без выигрыша в точности
+OCR_DPI = 300
 
 
 @dataclass
@@ -29,17 +42,23 @@ class PageText:
     text: str
     # Заголовки, найденные на странице — используются как метка фрагмента
     headings: list[str] = field(default_factory=list)
+    # Иллюстрации этой страницы
+    figures: list[ExtractedFigure] = field(default_factory=list)
 
 
 @dataclass
 class ParsedDocument:
     pages: list[PageText]
     used_ocr: bool = False
-    parser: str = "pypdf"
+    parser: str = "pymupdf"
 
     @property
     def total_chars(self) -> int:
         return sum(len(p.text) for p in self.pages)
+
+    @property
+    def figures(self) -> list[ExtractedFigure]:
+        return [figure for page in self.pages for figure in page.figures]
 
 
 class ParsingError(RuntimeError):
@@ -82,74 +101,142 @@ def detect_headings(text: str) -> list[str]:
 # -------------------------------------------------------------------- PDF
 
 
-def parse_pdf_text_layer(path: Path) -> ParsedDocument:
-    from pypdf import PdfReader
+def open_pdf(path: Path):
+    """Открывает PDF. Вынесено отдельно: тем же документом пользуется
+    вырезание предпросмотра иллюстрации."""
+    import pymupdf
 
-    reader = PdfReader(str(path))
+    try:
+        return pymupdf.open(str(path))
+    except Exception as exc:  # noqa: BLE001
+        raise ParsingError(f"Не удалось открыть PDF: {exc}") from exc
+
+
+def parse_pdf_text_layer(doc) -> ParsedDocument:
     pages: list[PageText] = []
-    for i, page in enumerate(reader.pages, start=1):
+
+    for i in range(len(doc)):
+        page = doc[i]
+        page_number = i + 1
         try:
-            raw = page.extract_text() or ""
+            raw = page.get_text("text") or ""
         except Exception as exc:  # noqa: BLE001 — одна битая страница не должна ронять книгу
-            log.warning("pdf_page_extract_failed", page=i, error=str(exc))
+            log.warning("pdf_page_extract_failed", page=page_number, error=str(exc))
             raw = ""
+
         text = clean_text(raw)
-        pages.append(PageText(page_number=i, text=text, headings=detect_headings(text)))
+        try:
+            page_figures = figures_mod.extract_page_figures(page, page_number)
+        except Exception as exc:  # noqa: BLE001 — рисунки необязательны
+            log.warning("pdf_page_figures_failed", page=page_number, error=str(exc))
+            page_figures = []
 
-    return ParsedDocument(pages=pages, parser="pypdf")
+        pages.append(
+            PageText(
+                page_number=page_number,
+                text=text,
+                headings=detect_headings(text),
+                figures=page_figures,
+            )
+        )
+
+    return ParsedDocument(pages=pages, parser="pymupdf")
 
 
-def parse_pdf_ocr(path: Path, languages: str = "rus+eng") -> ParsedDocument:
+def _ocr_page(page, languages: str) -> str:
+    """Распознаёт одну страницу.
+
+    Страница растеризуется средствами PyMuPDF, минуя pdf2image и
+    poppler: лишняя зависимость в контейнере не нужна, когда в проекте
+    уже есть библиотека, умеющая отдавать пиксели.
+    """
+    import io
+
+    import pytesseract
+    from PIL import Image
+
+    pixmap = page.get_pixmap(dpi=OCR_DPI)
+    with Image.open(io.BytesIO(pixmap.tobytes("png"))) as image:
+        return pytesseract.image_to_string(image, lang=languages)
+
+
+def parse_pdf_ocr(doc, languages: str = "rus+eng") -> ParsedDocument:
     """Распознавание отсканированных страниц.
 
-    Медленно (единицы секунд на страницу), поэтому вызывается только когда
-    текстового слоя действительно нет.
+    Медленно (единицы секунд на страницу), поэтому вызывается только
+    когда текстового слоя действительно нет.
     """
-    import pytesseract
-    from pdf2image import convert_from_path
-
     pages: list[PageText] = []
-    # Постранично, чтобы книга на 800 страниц не съела всю память
-    from pypdf import PdfReader
+    total = len(doc)
 
-    total = len(PdfReader(str(path)).pages)
-
-    for i in range(1, total + 1):
+    for i in range(total):
+        page = doc[i]
+        page_number = i + 1
         try:
-            images = convert_from_path(str(path), dpi=300, first_page=i, last_page=i)
-            raw = pytesseract.image_to_string(images[0], lang=languages)
+            raw = _ocr_page(page, languages)
         except Exception as exc:  # noqa: BLE001
-            log.warning("ocr_page_failed", page=i, error=str(exc))
+            log.warning("ocr_page_failed", page=page_number, error=str(exc))
             raw = ""
+
         text = clean_text(raw)
-        pages.append(PageText(page_number=i, text=text, headings=detect_headings(text)))
+        try:
+            page_figures = figures_mod.extract_page_figures(page, page_number)
+        except Exception as exc:  # noqa: BLE001 — рисунки необязательны
+            log.warning("ocr_page_figures_failed", page=page_number, error=str(exc))
+            page_figures = []
 
-        if i % 25 == 0:
-            log.info("ocr_progress", page=i, total=total)
+        # У скана весь лист — одна картинка. Текст распознан отдельно, так
+        # что подписи структур берутся из него, а не из границ изображения.
+        for figure in page_figures:
+            if figure.kind == FigureKind.page and text:
+                figure.title = figure.title or (detect_headings(text) or [None])[0]
 
-    return ParsedDocument(pages=pages, used_ocr=True, parser="tesseract")
+        pages.append(
+            PageText(
+                page_number=page_number,
+                text=text,
+                headings=detect_headings(text),
+                figures=page_figures,
+            )
+        )
+
+        if page_number % 25 == 0:
+            log.info("ocr_progress", page=page_number, total=total)
+
+    return ParsedDocument(pages=pages, used_ocr=True, parser="pymupdf+tesseract")
 
 
 def parse_pdf(path: Path, ocr_enabled: bool = True) -> ParsedDocument:
-    doc = parse_pdf_text_layer(path)
+    doc = open_pdf(path)
+    try:
+        parsed = parse_pdf_text_layer(doc)
 
-    if not doc.pages:
-        raise ParsingError("PDF не содержит страниц")
+        if not parsed.pages:
+            raise ParsingError("PDF не содержит страниц")
 
-    avg_chars = doc.total_chars / len(doc.pages)
-    if avg_chars >= MIN_CHARS_PER_PAGE:
-        return doc
+        avg_chars = parsed.total_chars / len(parsed.pages)
+        if avg_chars >= MIN_CHARS_PER_PAGE:
+            return parsed
 
-    if not ocr_enabled:
-        raise ParsingError(
-            "В PDF нет текстового слоя (похоже на скан), а OCR отключён в настройках"
+        if not ocr_enabled:
+            raise ParsingError(
+                "В PDF нет текстового слоя (похоже на скан), а OCR отключён в настройках"
+            )
+
+        log.info(
+            "pdf_looks_scanned",
+            avg_chars=round(avg_chars, 1),
+            pages=len(parsed.pages),
         )
-
-    log.info("pdf_looks_scanned", avg_chars=round(avg_chars, 1), pages=len(doc.pages))
-    return parse_pdf_ocr(path)
+        return parse_pdf_ocr(doc)
+    finally:
+        doc.close()
 
 
 # -------------------------------------------------------------------- DOCX
+
+# Подпись к рисунку в методичке — обычным абзацем под картинкой
+_DOCX_CAPTION = figures_mod.CAPTION_RE
 
 
 def parse_docx(path: Path) -> ParsedDocument:
@@ -158,19 +245,62 @@ def parse_docx(path: Path) -> ParsedDocument:
     Собираем весь текст, разметку заголовков берём из стилей Word
     (Heading 1..9) и складываем в одну «страницу»: для цитирования
     важнее раздел, чем номер страницы, которого в файле попросту нет.
+
+    Рисунки в DOCX ищутся по подписям и по наличию вложенной картинки в
+    абзаце. Номера страницы у них нет, поэтому ссылка на иллюстрацию
+    указывает раздел — это всё, на что можно опереться в таком файле.
     """
     import docx
 
     document = docx.Document(str(path))
     parts: list[str] = []
     headings: list[str] = []
+    found: list[ExtractedFigure] = []
+    current_heading: str | None = None
 
     for para in document.paragraphs:
         text = para.text.strip()
+        style = (para.style.name or "").lower()
+        # Вложенная картинка видна в XML абзаца как элемент <w:drawing>
+        has_image = "graphicData" in para._p.xml or "<w:drawing" in para._p.xml
+
+        if has_image:
+            found.append(
+                ExtractedFigure(
+                    page_number=0,  # страниц в DOCX нет
+                    kind=FigureKind.figure,
+                    title=current_heading,
+                    confidence=0.6,
+                )
+            )
+
         if not text:
             continue
-        style = (para.style.name or "").lower()
+
+        caption_match = _DOCX_CAPTION.match(text)
+        if caption_match:
+            label = caption_match.group("label").strip()
+            rest = caption_match.group("rest").strip()
+            # Подпись идёт сразу за своей картинкой — дополняем последнюю
+            if found and found[-1].label is None:
+                found[-1].label = label
+                found[-1].title = rest or current_heading
+                found[-1].confidence = 0.9
+            else:
+                found.append(
+                    ExtractedFigure(
+                        page_number=0,
+                        kind=FigureKind.figure,
+                        label=label,
+                        title=rest or current_heading,
+                        confidence=0.8,
+                    )
+                )
+            parts.append(text)
+            continue
+
         if style.startswith("heading") or style.startswith("заголовок"):
+            current_heading = text
             headings.append(text)
             parts.append(f"\n\n## {text}\n")
         else:
@@ -188,7 +318,11 @@ def parse_docx(path: Path) -> ParsedDocument:
 
     text = clean_text("\n".join(parts))
     return ParsedDocument(
-        pages=[PageText(page_number=1, text=text, headings=headings)],
+        pages=[
+            PageText(
+                page_number=1, text=text, headings=headings, figures=found
+            )
+        ],
         parser="python-docx",
     )
 

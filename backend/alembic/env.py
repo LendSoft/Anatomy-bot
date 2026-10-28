@@ -27,7 +27,7 @@ def include_object(obj, name, type_, reflected, compare_to) -> bool:
     исключаем их из сравнения, чтобы не плодить пустые миграции."""
     if type_ == "index" and name in {
         "ix_document_chunks_embedding",
-        "ix_atlas_images_embedding",
+        "ix_document_figures_embedding",
         "ix_anatomy_terms_ru_trgm",
     }:
         return False
