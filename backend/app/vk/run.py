@@ -125,6 +125,7 @@ class LongPollBot:
 
             waiting_logged = False
             self.vk.token = token
+            self.vk.group_id = group_id
 
             try:
                 server = await self.vk.get_long_poll_server(group_id)

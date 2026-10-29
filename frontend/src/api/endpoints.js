@@ -109,6 +109,19 @@ export const glossary = {
     }),
 }
 
+export const organization = {
+  schedules: () => api.get('/organization/schedules'),
+  uploadSchedule: (formData) =>
+    api.post('/organization/schedules', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  deleteSchedule: (id) => api.delete(`/organization/schedules/${id}`),
+  teachers: () => api.get('/organization/teachers'),
+  createTeacher: (payload) => api.post('/organization/teachers', payload),
+  updateTeacher: (id, payload) => api.patch(`/organization/teachers/${id}`, payload),
+  deleteTeacher: (id) => api.delete(`/organization/teachers/${id}`),
+}
+
 export const health = {
   full: () => api.get('/health/full'),
 }

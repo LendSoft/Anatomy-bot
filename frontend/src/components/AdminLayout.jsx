@@ -4,6 +4,7 @@ import { Avatar, Dropdown, Layout, Menu } from 'antd'
 import {
   ApiOutlined,
   BookOutlined,
+  ContactsOutlined,
   DashboardOutlined,
   ExperimentOutlined,
   FileTextOutlined,
@@ -35,6 +36,11 @@ const MENU_ITEMS = [
     key: '/glossary',
     icon: <TranslationOutlined />,
     label: <Link to="/glossary">Термины</Link>,
+  },
+  {
+    key: '/organization',
+    icon: <ContactsOutlined />,
+    label: <Link to="/organization">Орг. информация</Link>,
   },
   {
     key: '/prompts',

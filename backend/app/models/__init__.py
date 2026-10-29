@@ -6,6 +6,7 @@ from app.models.document import Document, DocumentChunk, DocumentStatus
 from app.models.evaluation import RunStatus, TestQuestion, TestResult, TestRun, TestSet
 from app.models.figure import DocumentFigure, FigureKind
 from app.models.glossary import AnatomyTerm
+from app.models.organization import GroupSchedule, Teacher
 from app.models.prompt import Prompt, PromptKind
 from app.models.setting import AppSetting
 from app.models.user import AdminUser, VkUser
@@ -23,6 +24,7 @@ __all__ = [
     "DocumentFigure",
     "DocumentStatus",
     "FigureKind",
+    "GroupSchedule",
     "Message",
     "MessageRole",
     "Prompt",
@@ -31,6 +33,7 @@ __all__ = [
     "TestQuestion",
     "TestResult",
     "TestRun",
+    "Teacher",
     "TestSet",
     "VkUser",
 ]

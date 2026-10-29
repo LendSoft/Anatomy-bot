@@ -13,6 +13,7 @@ import Playground from './pages/Playground'
 import Logs from './pages/Logs'
 import Testing from './pages/Testing'
 import Glossary from './pages/Glossary'
+import Organization from './pages/Organization'
 import System from './pages/System'
 import { useAuthStore } from './store/auth'
 
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="logs" element={<Logs />} />
         <Route path="testing" element={<Testing />} />
         <Route path="glossary" element={<Glossary />} />
+        <Route path="organization" element={<Organization />} />
         <Route path="system" element={<System />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

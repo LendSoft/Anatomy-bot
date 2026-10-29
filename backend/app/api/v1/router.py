@@ -10,6 +10,7 @@ from app.api.v1 import (
     glossary,
     health,
     logs,
+    organization,
     prompts,
     settings_api,
     stats,
@@ -29,3 +30,4 @@ api_router.include_router(logs.router)
 api_router.include_router(stats.router)
 api_router.include_router(testing.router)
 api_router.include_router(glossary.router)
+api_router.include_router(organization.router)

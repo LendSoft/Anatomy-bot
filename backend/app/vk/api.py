@@ -28,9 +28,15 @@ class VkError(RuntimeError):
 
 
 class VkApi:
-    def __init__(self, token: str, api_version: str | None = None) -> None:
+    def __init__(
+        self,
+        token: str,
+        api_version: str | None = None,
+        group_id: str | None = None,
+    ) -> None:
         self.token = token
         self.version = api_version or settings.vk_api_version
+        self.group_id = group_id
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=10.0))
 
     async def call(self, method: str, **params: Any) -> Any:
@@ -99,6 +105,36 @@ class VkApi:
 
         except (VkError, httpx.HTTPError, KeyError, IndexError) as exc:
             log.warning("vk_photo_upload_failed", error=str(exc))
+            return None
+
+    async def upload_document(self, peer_id: int, document_path: Path) -> str | None:
+        """Загружает документ в диалог и возвращает идентификатор вложения."""
+        try:
+            server = await self.call(
+                "docs.getMessagesUploadServer",
+                peer_id=peer_id,
+                type="doc",
+                group_id=self.group_id,
+            )
+
+            with document_path.open("rb") as file:
+                upload = await self._client.post(
+                    server["upload_url"],
+                    files={"file": (document_path.name, file)},
+                )
+            upload.raise_for_status()
+            uploaded = upload.json()
+
+            saved = await self.call(
+                "docs.save", file=uploaded["file"], title=document_path.name
+            )
+            document = saved.get("doc")
+            if not document:
+                raise KeyError("doc")
+            return f"doc{document['owner_id']}_{document['id']}"
+
+        except (VkError, httpx.HTTPError, KeyError, IndexError, TypeError) as exc:
+            log.warning("vk_document_upload_failed", error=str(exc))
             return None
 
     async def get_users(self, user_ids: list[int]) -> list[dict]:
