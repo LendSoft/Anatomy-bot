@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from app.core.logging import get_logger
 from app.rag import figures as figures_mod
@@ -63,6 +64,15 @@ class ParsedDocument:
 
 class ParsingError(RuntimeError):
     pass
+
+
+class ParsingCancelled(RuntimeError):
+    pass
+
+
+def _check_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise ParsingCancelled("Индексация отменена")
 
 
 # ------------------------------------------------------------------ утилиты
@@ -112,10 +122,13 @@ def open_pdf(path: Path):
         raise ParsingError(f"Не удалось открыть PDF: {exc}") from exc
 
 
-def parse_pdf_text_layer(doc) -> ParsedDocument:
+def parse_pdf_text_layer(
+    doc, should_cancel: Callable[[], bool] | None = None
+) -> ParsedDocument:
     pages: list[PageText] = []
 
     for i in range(len(doc)):
+        _check_cancelled(should_cancel)
         page = doc[i]
         page_number = i + 1
         try:
@@ -160,7 +173,11 @@ def _ocr_page(page, languages: str) -> str:
         return pytesseract.image_to_string(image, lang=languages)
 
 
-def parse_pdf_ocr(doc, languages: str = "rus+eng") -> ParsedDocument:
+def parse_pdf_ocr(
+    doc,
+    languages: str = "rus+eng",
+    should_cancel: Callable[[], bool] | None = None,
+) -> ParsedDocument:
     """Распознавание отсканированных страниц.
 
     Медленно (единицы секунд на страницу), поэтому вызывается только
@@ -170,6 +187,7 @@ def parse_pdf_ocr(doc, languages: str = "rus+eng") -> ParsedDocument:
     total = len(doc)
 
     for i in range(total):
+        _check_cancelled(should_cancel)
         page = doc[i]
         page_number = i + 1
         try:
@@ -206,10 +224,14 @@ def parse_pdf_ocr(doc, languages: str = "rus+eng") -> ParsedDocument:
     return ParsedDocument(pages=pages, used_ocr=True, parser="pymupdf+tesseract")
 
 
-def parse_pdf(path: Path, ocr_enabled: bool = True) -> ParsedDocument:
+def parse_pdf(
+    path: Path,
+    ocr_enabled: bool = True,
+    should_cancel: Callable[[], bool] | None = None,
+) -> ParsedDocument:
     doc = open_pdf(path)
     try:
-        parsed = parse_pdf_text_layer(doc)
+        parsed = parse_pdf_text_layer(doc, should_cancel=should_cancel)
 
         if not parsed.pages:
             raise ParsingError("PDF не содержит страниц")
@@ -228,7 +250,7 @@ def parse_pdf(path: Path, ocr_enabled: bool = True) -> ParsedDocument:
             avg_chars=round(avg_chars, 1),
             pages=len(parsed.pages),
         )
-        return parse_pdf_ocr(doc)
+        return parse_pdf_ocr(doc, should_cancel=should_cancel)
     finally:
         doc.close()
 
@@ -239,7 +261,9 @@ def parse_pdf(path: Path, ocr_enabled: bool = True) -> ParsedDocument:
 _DOCX_CAPTION = figures_mod.CAPTION_RE
 
 
-def parse_docx(path: Path) -> ParsedDocument:
+def parse_docx(
+    path: Path, should_cancel: Callable[[], bool] | None = None
+) -> ParsedDocument:
     """DOCX не разбит на страницы — разрывы страниц там условны.
 
     Собираем весь текст, разметку заголовков берём из стилей Word
@@ -259,6 +283,7 @@ def parse_docx(path: Path) -> ParsedDocument:
     current_heading: str | None = None
 
     for para in document.paragraphs:
+        _check_cancelled(should_cancel)
         text = para.text.strip()
         style = (para.style.name or "").lower()
         # Вложенная картинка видна в XML абзаца как элемент <w:drawing>
@@ -308,6 +333,7 @@ def parse_docx(path: Path) -> ParsedDocument:
 
     # Таблицы в методичках часто содержат классификации — теряем их зря
     for table in document.tables:
+        _check_cancelled(should_cancel)
         rows = [
             " | ".join(cell.text.strip() for cell in row.cells)
             for row in table.rows
@@ -335,16 +361,22 @@ def parse_txt(path: Path) -> ParsedDocument:
     )
 
 
-def parse(path: Path, ocr_enabled: bool = True) -> ParsedDocument:
+def parse(
+    path: Path,
+    ocr_enabled: bool = True,
+    should_cancel: Callable[[], bool] | None = None,
+) -> ParsedDocument:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return parse_pdf(path, ocr_enabled=ocr_enabled)
+        return parse_pdf(
+            path, ocr_enabled=ocr_enabled, should_cancel=should_cancel
+        )
     if suffix in (".docx", ".doc"):
         if suffix == ".doc":
             raise ParsingError(
                 "Формат .doc не поддерживается — пересохраните файл как .docx"
             )
-        return parse_docx(path)
+        return parse_docx(path, should_cancel=should_cancel)
     if suffix in (".txt", ".md"):
         return parse_txt(path)
     raise ParsingError(f"Неподдерживаемый формат файла: {suffix}")

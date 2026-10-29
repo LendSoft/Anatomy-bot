@@ -7,6 +7,8 @@ HTTP-запрос нельзя.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,6 +43,12 @@ async def _set_status(
         values["error_message"] = error
     await db.execute(update(Document).where(Document.id == document_id).values(**values))
     await db.commit()
+
+
+async def _document_exists(db: AsyncSession, document_id: int) -> bool:
+    return (
+        await db.execute(select(Document.id).where(Document.id == document_id))
+    ).scalar_one_or_none() is not None
 
 
 async def _save_figures(
@@ -100,7 +108,21 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
         await _set_status(db, document_id, DocumentStatus.parsing, progress=5)
         log.info("parsing_started", document_id=document_id, file=document.original_filename)
 
-        parsed = parsers.parse(path, ocr_enabled=bool(cfg["ocr_enabled"]))
+        cancel_event = threading.Event()
+        try:
+            parsed = await asyncio.to_thread(
+                parsers.parse,
+                path,
+                ocr_enabled=bool(cfg["ocr_enabled"]),
+                should_cancel=cancel_event.is_set,
+            )
+        except asyncio.CancelledError:
+            cancel_event.set()
+            raise
+
+        if not await _document_exists(db, document_id):
+            log.info("indexing_cancelled_document_deleted", document_id=document_id)
+            return
 
         if not parsed.total_chars:
             raise parsers.ParsingError(
@@ -117,6 +139,10 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
 
         if not chunks:
             raise parsers.ParsingError("После нарезки не осталось ни одного фрагмента")
+
+        if not await _document_exists(db, document_id):
+            log.info("indexing_cancelled_document_deleted", document_id=document_id)
+            return
 
         log.info(
             "chunking_done",
@@ -144,12 +170,19 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
         await _set_status(db, document_id, DocumentStatus.embedding, progress=45)
 
         for start in range(0, len(chunks), EMBED_BATCH):
+            if not await _document_exists(db, document_id):
+                log.info("indexing_cancelled_document_deleted", document_id=document_id)
+                return
             batch = chunks[start : start + EMBED_BATCH]
             # Заголовок в тексте эмбеддинга помогает попадать в нужный раздел
             texts = [
                 f"{c.heading}\n{c.content}" if c.heading else c.content for c in batch
             ]
             vectors = await embeddings.embed(texts, kind="document")
+
+            if not await _document_exists(db, document_id):
+                log.info("indexing_cancelled_document_deleted", document_id=document_id)
+                return
 
             db.add_all(
                 [
@@ -176,6 +209,9 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
         # Нужны, чтобы находить рисунок по вопросу напрямую: у страницы
         # атласа текста нет, кроме надписей на самом изображении
         if figures_saved:
+            if not await _document_exists(db, document_id):
+                log.info("indexing_cancelled_document_deleted", document_id=document_id)
+                return
             await _set_status(db, document_id, DocumentStatus.embedding, progress=90)
             try:
                 await figure_service.embed_document_figures(db, document_id)
@@ -186,6 +222,9 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
                 await db.rollback()
 
         # --------------------------------------------------------- готово
+        if not await _document_exists(db, document_id):
+            log.info("indexing_cancelled_document_deleted", document_id=document_id)
+            return
         await db.execute(
             update(Document)
             .where(Document.id == document_id)
@@ -220,6 +259,7 @@ async def index_document(db: AsyncSession, document_id: int) -> None:
 
 async def delete_document(db: AsyncSession, document_id: int) -> bool:
     from app.services import storage
+    from app.worker.queue import abort_document_jobs
 
     document = (
         await db.execute(select(Document).where(Document.id == document_id))
@@ -228,6 +268,13 @@ async def delete_document(db: AsyncSession, document_id: int) -> bool:
         return False
 
     stored_path = document.stored_path
+    await db.rollback()
+    await abort_document_jobs(document_id)
+
+    document = await db.get(Document, document_id)
+    if document is None:
+        return False
+
     await db.delete(document)  # фрагменты и иллюстрации уходят каскадом
     await db.commit()
 

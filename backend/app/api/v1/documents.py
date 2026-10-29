@@ -15,7 +15,7 @@ from app.models.document import Document, DocumentChunk, DocumentStatus
 from app.schemas.common import MessageResponse, Page
 from app.schemas.content import ChunkOut, DocumentOut, DocumentUpdate
 from app.services import document_service, storage
-from app.worker.queue import enqueue
+from app.worker.queue import enqueue, has_document_jobs
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/documents", tags=["Учебные материалы"])
@@ -156,6 +156,9 @@ async def reindex_document(document_id: int, db: DbSession, _: CurrentAdmin) -> 
     document = await db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Документ не найден")
+
+    if await has_document_jobs(document_id):
+        return MessageResponse(detail="Документ уже стоит в очереди или обрабатывается")
 
     document.status = DocumentStatus.pending
     document.progress = 0

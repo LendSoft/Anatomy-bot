@@ -73,3 +73,4 @@ class WorkerSettings:
     job_timeout = 60 * 60 * 3
     keep_result = 60 * 60 * 24
     max_tries = 2
+    allow_abort_jobs = True
